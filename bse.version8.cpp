@@ -1755,11 +1755,11 @@ tuple<cx_mat,cx_mat,cx_vec> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_an
 		//	}
 
 		//cout<<"end calculation coupling elements"<<endl;
-		excitonic_hamiltonian=(w_matrix+v_matrix)/volume_cell;
+		excitonic_hamiltonian=(w_matrix-v_matrix)/volume_cell;
 		/// adding the diagonal part to the BSE hamiltonian
 		for(int i=0;i<2;i++)
-			excitonic_hamiltonian.submat(i*3*number_conduction_bands*number_valence_bands*number_k_points_list,i*3*number_conduction_bands*number_valence_bands*number_k_points_list,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)=-excitonic_hamiltonian.submat(i*3*number_conduction_bands*number_valence_bands*number_k_points_list,i*3*number_conduction_bands*number_valence_bands*number_k_points_list,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)
-				+diagmat(energies_0.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1));
+			excitonic_hamiltonian.submat(i*3*number_conduction_bands*number_valence_bands*number_k_points_list,i*3*number_conduction_bands*number_valence_bands*number_k_points_list,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)=excitonic_hamiltonian.submat(i*3*number_conduction_bands*number_valence_bands*number_k_points_list,i*3*number_conduction_bands*number_valence_bands*number_k_points_list,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)
+				+diagmat(-energies_0.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1));
 		//for(int i=0;i<4;i++)
 		//	for(int j=0;j<4;j++){
 		//		cout<<i<<" "<<j<<endl;
@@ -1794,9 +1794,9 @@ tuple<cx_mat,cx_mat,cx_vec> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_an
 						vectorise(temporary_matrix4.rows(rows_indices),1);
 				}
 		//cout<<"end calculation coupling elements"<<endl;
-		excitonic_hamiltonian=(w_matrix+v_matrix)/volume_cell;
+		excitonic_hamiltonian=(w_matrix-v_matrix)/volume_cell;
 		excitonic_hamiltonian.submat(0,0,number_conduction_bands*number_valence_bands*number_k_points_list-1,number_conduction_bands*number_valence_bands*number_k_points_list-1)=
-			+excitonic_hamiltonian.submat(0,0,number_conduction_bands*number_valence_bands*number_k_points_list-1,number_conduction_bands*number_valence_bands*number_k_points_list-1)+diagmat(energies_0.row(0));
+			+excitonic_hamiltonian.submat(0,0,number_conduction_bands*number_valence_bands*number_k_points_list-1,number_conduction_bands*number_valence_bands*number_k_points_list-1)+diagmat(-energies_0.row(0));
 	}
 	cout << "Building BSE hamiltonian finished..." << endl;
 	const auto end = std::chrono::system_clock::now();
@@ -1816,7 +1816,8 @@ cx_mat Excitonic_Hamiltonian:: separating_spin_channels(cx_mat unseparated_excit
 	transformation_matrix(1,1)=-1.0/sqrt(2); 
 	transformation_matrix(1,0)=1.0/sqrt(2);
 	transformation_matrix(0,1)=1.0/sqrt(2); 
-	//#pragma omp for collapse(4)
+	
+	#pragma omp for collapse(4)
 	for(int spin_channel1=0;spin_channel1<2;spin_channel1++)
 		for(int spin_channel2=0;spin_channel2<2;spin_channel2++)
 			for(int spin_channel3=0;spin_channel3<2;spin_channel3++)
@@ -2299,8 +2300,8 @@ void Excitonic_Hamiltonian:: pull_dielectric_function_macroscopic_value(cx_vec o
 				/////#pragma omp parallel for private(exc_oscillator_force2,exc_oscillator_force1,omega,exc_eigenvalues,dielectric_tensor_bse)
 				for(int s=0;s<number_omegas_path;s++){
 					for(int l=0;l<dimension_bse_hamiltonian;l++)
-						temporary_variable(s)=temporary_variable(s)+(exc_oscillator_force2(l))*conj(exc_oscillator_force1(l))/(omegas_path(s)+exc_eigenvalues(l)+ieta);
-					dielectric_tensor_bse(i,j,s)=1.0-temporary_variable(s);
+						temporary_variable(s)=temporary_variable(s)+(exc_oscillator_force2(l))*conj(exc_oscillator_force1(l))/(omegas_path(s)-exc_eigenvalues(l)+ieta);
+					dielectric_tensor_bse(i,j,s)=1.0-factor*temporary_variable(s);
 				}
 			}
 		}
@@ -2398,8 +2399,8 @@ int main()
 	//htb.print_ks_states(k_point,10,10);
 
 	//////Initializing dipole elements
-	int number_conduction_bands_selected=20;
-	int number_valence_bands_selected=20;
+	int number_conduction_bands_selected=10;
+	int number_valence_bands_selected=10;
 	int optical_limit=0;
 	Dipole_Elements dipole_elements(number_k_points_list,k_points_list,number_g_points_list,g_points_list,number_wannier_centers,number_valence_bands_selected,number_conduction_bands_selected,&htb,spinorial_calculation,optical_limit);
 	vec excitonic_momentum; excitonic_momentum.zeros(3);
@@ -2408,8 +2409,8 @@ int main()
 
 	/////////Initializing dielectric function
 	Dielectric_Function dielectric_function(&dipole_elements,number_k_points_list,number_g_points_list,g_points_list,number_valence_bands_selected,number_conduction_bands_selected,&coulomb_potential,spinorial_calculation);
-	cx_double omega; omega=0.0; double eta=0.100; double PPA=27.00;
-	int number_omegas_path=1000;
+	cx_double omega; omega=0.0; double eta=0.10; double PPA=27.00;
+	int number_omegas_path=100;
 	cx_vec omegas_path(number_omegas_path);
 	cx_double max_omega=5.00;
 	cx_double min_omega=0.00;
@@ -2417,7 +2418,7 @@ int main()
 	for(int i=0;i<number_omegas_path;i++)
 		omegas_path(i)=min_omega+double(i)/double(number_omegas_path)*(max_omega-min_omega);
 	string file_macroscopic_dielectric_function_name="macroscopic_diel_func.dat";
-	dielectric_function.pull_macroscopic_value(omegas_path,number_omegas_path,eta,file_macroscopic_dielectric_function_name);
+	///dielectric_function.pull_macroscopic_value(omegas_path,number_omegas_path,eta,file_macroscopic_dielectric_function_name);
 
 	////////Initializing BSE hamiltonian
 	double epsilon=0.1; int adding_screening=1;
