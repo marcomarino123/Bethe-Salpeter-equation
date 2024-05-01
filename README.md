@@ -1,4 +1,4 @@
 # BSE
-BSE
-writing a parallel-working version...
-BSE from Tigh-Binding hamiltonian
+BSE from a Tigh-Binding hamiltonian
+
+next future: a package to do also GW... 
