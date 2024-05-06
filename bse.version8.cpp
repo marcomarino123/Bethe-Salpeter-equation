@@ -350,6 +350,7 @@ private:
 	bool dynamic_shifting;
 	double fermi_energy;
 	double little_shift;
+	double scissor_operator;
 public:
 	Hamiltonian_TB(){
 		number_wannier_functions = 0;
@@ -360,7 +361,7 @@ public:
 		dynamic_shifting = false;
 	};
 	/// reading hamiltonian from wannier90 output
-	Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp);
+	Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp,double scissor_operator_tmp);
 	field<cx_mat> FFT(vec k_point);
 	tuple<mat, cx_mat> pull_ks_states(vec k_point);
 	tuple<mat, cx_mat> pull_ks_states_subset(vec k_point,int number_valence_bands_selected,int number_conduction_bands_selected);
@@ -382,12 +383,13 @@ public:
 		dynamic_shifting = false;
 	};
 };
-Hamiltonian_TB::Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp){
+Hamiltonian_TB::Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp,double scissor_operator_tmp){
 	cout<<"Be Carefull: if you are doing a collinear spin calculation, the number of Wannier functions in the two spin channels has to be the same!!"<<endl;
 	fermi_energy=fermi_energy_tmp;
 	number_atoms=number_atoms_tmp;
 	spinorial_calculation=spinorial_calculation_tmp;
 	dynamic_shifting=dynamic_shifting_tmp;
+	scissor_operator=scissor_operator_tmp;
 	ifstream wannier90_hr_file;
 	ifstream wannier90_centers_file;
 	wannier90_hr_file.open(wannier90_hr_file_name);
@@ -726,6 +728,9 @@ tuple<mat, cx_mat> Hamiltonian_TB::pull_ks_states_subset(vec k_point,int number_
 	int number_valence_bands = 0;
 	int number_conduction_bands = 0;
 	int dimensions_subspace = number_conduction_bands_selected + number_valence_bands_selected;
+	vec spinor_scissor_operator(2);
+	spinor_scissor_operator(0)=scissor_operator;
+	spinor_scissor_operator(1)=scissor_operator;
 	
 	tuple<mat, cx_mat> ks_states= pull_ks_states(k_point);
 	mat ks_eigenvalues = get<0>(ks_states); 
@@ -733,13 +738,13 @@ tuple<mat, cx_mat> Hamiltonian_TB::pull_ks_states_subset(vec k_point,int number_
 
 	/// distinguishing between valence and conduction states
 	for (int i = 0; i < number_wannier_functions; i++){
-		//cout<<ks_eigenvalues(0, i)<<" "<<ks_eigenvalues(1, i)<<endl; 
+		///cout<<ks_eigenvalues(0, i)<<" "<<ks_eigenvalues(1, i)<<endl; 
 		if (ks_eigenvalues(0, i)<=fermi_energy && ks_eigenvalues(1, i)<=fermi_energy)
 			number_valence_bands++;
 		else
 			number_conduction_bands++;
 	}
-	//cout<<"Number valence bands "<<number_valence_bands<<" Number conduction bands "<<number_conduction_bands<<endl;
+	///cout<<"Number valence bands "<<number_valence_bands<<" Number conduction bands "<<number_conduction_bands<<endl;
 	
 	/// in a single matrix: first are written valence states, than (at higher rows) conduction states
 	mat ks_eigenvalues_subset(2, dimensions_subspace);
@@ -750,7 +755,7 @@ tuple<mat, cx_mat> Hamiltonian_TB::pull_ks_states_subset(vec k_point,int number_
 			ks_eigenvalues_subset.col(i) = ks_eigenvalues.col((number_valence_bands - 1) - i);
 		}else{
 			ks_eigenvectors_subset.col(i) = ks_eigenvectors.col(number_valence_bands + (i - number_valence_bands_selected));
-			ks_eigenvalues_subset.col(i) = ks_eigenvalues.col(number_valence_bands + (i - number_valence_bands_selected));
+			ks_eigenvalues_subset.col(i) = ks_eigenvalues.col(number_valence_bands + (i - number_valence_bands_selected))+spinor_scissor_operator;
 		}
 	}
 	return {ks_eigenvalues_subset, ks_eigenvectors_subset};
@@ -1521,14 +1526,14 @@ public:
 	/// be carefull: do not try to build the BSE matrix with more bands than those given by the hamiltonian!!!
 	/// there is a check at the TB hamiltonian level but not here...
 	Excitonic_Hamiltonian(int number_valence_bands_tmp,int number_conduction_bands_tmp,Coulomb_Potential *coulomb_potential_tmp,Dielectric_Function *dielectric_function_tmp, Hamiltonian_TB *hamiltonian_tb_tmp, Dipole_Elements *dipole_elements_tmp, mat k_points_list_tmp, int number_k_points_list_tmp, mat g_points_list_tmp,int number_g_points_list_tmp, int spinorial_calculation_tmp, int adding_screening_tmp);
-	tuple<cx_mat,cx_mat> pull_excitonic_hamiltonian(vec excitonic_momentum,double epsilon,double eta);
+	tuple<cx_mat,cx_mat> pull_excitonic_hamiltonian(vec excitonic_momentum,double eta);
 	cx_mat separating_spin_channels(cx_mat unseparated_excitonic_hamiltonian);
-	tuple<cx_mat,cx_mat,cx_mat> pull_excitonic_hamiltonian_resonant_and_coupling_parts(vec excitonic_momentum,double epsilon,double eta);
-	tuple<vec,cx_mat,cx_mat> pull_eigenstates_through_cholesky_way(vec excitonic_momentum,double epsilon,double eta);
-	tuple<cx_vec,cx_mat,cx_mat> pull_eigenstates_through_usual_way(vec excitonic_momentum,double epsilon,double eta);
+	tuple<cx_mat,cx_mat,cx_mat> pull_excitonic_hamiltonian_resonant_and_coupling_parts(vec excitonic_momentum,double eta);
+	tuple<vec,cx_mat,cx_mat> pull_eigenstates_through_cholesky_way(vec excitonic_momentum,double eta);
+	tuple<cx_vec,cx_mat,cx_mat> pull_eigenstates_through_usual_way(vec excitonic_momentum,double eta);
 	cx_vec pull_excitonic_oscillator_force(cx_mat excitonic_eigenstates,cx_mat rho_cv);
-	void pull_macroscopic_bse_dielectric_function(cx_vec omegas_path,int number_omegas_path,double eta, double epsilon,string file_macroscopic_dielectric_function_bse_name);
-	void print(vec excitonic_momentum,double epsilon,double eta);
+	void pull_macroscopic_bse_dielectric_function(cx_vec omegas_path,int number_omegas_path,double eta,string file_macroscopic_dielectric_function_bse_name);
+	void print(vec excitonic_momentum,double eta);
 };
 Excitonic_Hamiltonian::Excitonic_Hamiltonian(int number_valence_bands_tmp,int number_conduction_bands_tmp,Coulomb_Potential *coulomb_potential_tmp,Dielectric_Function *dielectric_function_tmp,Hamiltonian_TB *hamiltonian_tb_tmp,Dipole_Elements *dipole_elements_tmp,mat k_points_list_tmp,int number_k_points_list_tmp,mat g_points_list_tmp,int number_g_points_list_tmp,int spinorial_calculation_tmp,int adding_screening_tmp){
 	spinorial_calculation = spinorial_calculation_tmp;
@@ -1574,7 +1579,7 @@ Excitonic_Hamiltonian::Excitonic_Hamiltonian(int number_valence_bands_tmp,int nu
 		spin_number_valence_plus_conduction = number_valence_plus_conduction;
 	}
 };
-tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian(vec excitonic_momentum,double epsilon,double eta){
+tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian(vec excitonic_momentum,double eta){
 	/// saving memory for the BSE matrix (kernel)
 	cx_mat excitonic_hamiltonian(spin_dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian);
 	
@@ -1756,9 +1761,9 @@ cx_mat Excitonic_Hamiltonian:: separating_spin_channels(cx_mat unseparated_excit
 	return separated_excitonic_hamiltonian;
 };
 /// usual diagonalization routine
-tuple<cx_vec,cx_mat,cx_mat> Excitonic_Hamiltonian::pull_eigenstates_through_usual_way(vec excitonic_momentum,double epsilon,double eta)
+tuple<cx_vec,cx_mat,cx_mat> Excitonic_Hamiltonian::pull_eigenstates_through_usual_way(vec excitonic_momentum,double eta)
 {
-	tuple<cx_mat,cx_mat> excitonic_hamiltonian_and_rho_cv=pull_excitonic_hamiltonian(excitonic_momentum,epsilon,eta);
+	tuple<cx_mat,cx_mat> excitonic_hamiltonian_and_rho_cv=pull_excitonic_hamiltonian(excitonic_momentum,eta);
 	cx_mat excitonic_hamiltonian=get<0>(excitonic_hamiltonian_and_rho_cv);
 	cx_mat rho_cv=get<1>(excitonic_hamiltonian_and_rho_cv);
 
@@ -1915,7 +1920,7 @@ tuple<cx_vec,cx_mat,cx_mat> Excitonic_Hamiltonian::pull_eigenstates_through_usua
 		return {exc_eigenvalues,exc_eigenvectors,rho_cv};
 	}
 };
-tuple<cx_mat,cx_mat,cx_mat> Excitonic_Hamiltonian:: pull_excitonic_hamiltonian_resonant_and_coupling_parts(vec excitonic_momentum, double epsilon, double eta){
+tuple<cx_mat,cx_mat,cx_mat> Excitonic_Hamiltonian:: pull_excitonic_hamiltonian_resonant_and_coupling_parts(vec excitonic_momentum, double eta){
 	/// calculating the potentianl before the resonant part building
 	/// averaging over the three directions
 	vec excitonic_momentum_0(3,fill::zeros); tuple<mat,cx_mat> energies_rho_0;
@@ -2065,9 +2070,9 @@ tuple<cx_mat,cx_mat,cx_mat> Excitonic_Hamiltonian:: pull_excitonic_hamiltonian_r
 /// Fastest diagonalization routine
 ///[1] Structure preserving parallel algorithms for solving the Bethe–Salpeter eigenvalue problem Meiyue Shao, Felipe H. da Jornada, Chao Yang, Jack Deslippe, Steven G. Louie
 ///[2] Beyond the Tamm-Dancoff approximation for ext.ended systems using exact diagonalization Tobias Sander, Emanuelel Maggio, and Georg Kresse
-tuple<vec,cx_mat,cx_mat> Excitonic_Hamiltonian:: pull_eigenstates_through_cholesky_way(vec excitonic_momentum, double epsilon, double eta)
+tuple<vec,cx_mat,cx_mat> Excitonic_Hamiltonian:: pull_eigenstates_through_cholesky_way(vec excitonic_momentum, double eta)
 {
-	tuple<cx_mat,cx_mat,cx_mat> resonant_part_and_coupling_part=pull_excitonic_hamiltonian_resonant_and_coupling_parts(excitonic_momentum,epsilon,eta);
+	tuple<cx_mat,cx_mat,cx_mat> resonant_part_and_coupling_part=pull_excitonic_hamiltonian_resonant_and_coupling_parts(excitonic_momentum,eta);
 	cx_mat rho_cv=get<2>(resonant_part_and_coupling_part);
 	/// diagonalizing the BSE matrix M_{(bz_number_k_points_list x number_valence_bands x number_conduction_bands)x(bz_number_k_points_list x number_valence_bands x number_conduction_bands)}
 	int spin_dimension_bse_hamiltonian_2 = 2*spin_dimension_bse_hamiltonian;
@@ -2177,10 +2182,10 @@ cx_vec Excitonic_Hamiltonian::pull_excitonic_oscillator_force(cx_mat excitonic_e
 	}
 	return oscillator_force;
 };
-void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(cx_vec omegas_path,int number_omegas_path,double eta, double epsilon,string file_macroscopic_dielectric_function_bse_name)
+void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(cx_vec omegas_path,int number_omegas_path,double eta,string file_macroscopic_dielectric_function_bse_name)
 {
 	cout << "Calculating dielectric tensor..." << endl;
-	double factor=(pow(electron_charge, 2)/(vacuum_dielectric_constant*coulomb_potential->pull_volume()*number_k_points_list));
+	double factor=(pow(electron_charge, 2)*1000/(vacuum_dielectric_constant*coulomb_potential->pull_volume()));
 	
 	tuple<cx_vec,cx_mat,cx_mat> eigenvalues_and_eigenstates_and_rho_cv;
 	cx_mat rho_cv(spin_number_valence_plus_conduction*number_valence_plus_conduction*number_k_points_list,number_g_points_list);
@@ -2224,7 +2229,7 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(cx_vec ome
 			//	excitonic_momentum2(j)-=minval;
 			//}else{
 				excitonic_momentum1(i)+=minval;
-				eigenvalues_and_eigenstates_and_rho_cv = pull_eigenstates_through_usual_way(excitonic_momentum1, epsilon, eta);
+				eigenvalues_and_eigenstates_and_rho_cv = pull_eigenstates_through_usual_way(excitonic_momentum1, eta);
 				///eigenvalues_and_eigenstates_and_rho_cv = pull_eigenstates_through_cholesky_way(excitonic_momentum1, epsilon, eta);
 				exc_eigenvalues=get<0>(eigenvalues_and_eigenstates_and_rho_cv);
 				exc_eigenstates=get<1>(eigenvalues_and_eigenstates_and_rho_cv);
@@ -2241,7 +2246,7 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(cx_vec ome
 			for(int s=0;s<number_omegas_path;s++){
 				for(int l=0;l<dimension_bse_hamiltonian;l++)
 					temporary_variable(s)=temporary_variable(s)+(exc_oscillator_force2(l))*conj(exc_oscillator_force1(l))/(omegas_path(s)-exc_eigenvalues(l)+ieta);
-				dielectric_tensor_bse(i,j,s)=1.0-factor*temporary_variable(s);
+				dielectric_tensor_bse(i,j,s)=-factor*temporary_variable(s);
 			}
 		}
 
@@ -2257,9 +2262,9 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(cx_vec ome
 	}
 	dielectric_tensor_file.close();
 };
-void Excitonic_Hamiltonian::print(vec excitonic_momentum,double epsilon,double eta){
+void Excitonic_Hamiltonian::print(vec excitonic_momentum,double eta){
 	//cout<<"BSE hamiltoian..."<<endl;
-	//tuple<cx_mat,cx_mat> hamiltonian_and_rho=pull_excitonic_hamiltonian(excitonic_momentum,epsilon,eta);
+	//tuple<cx_mat,cx_mat> hamiltonian_and_rho=pull_excitonic_hamiltonian(excitonic_momentum,eta);
 	//cx_mat hamiltonian=get<0>(hamiltonian_and_rho);
 	//for(int i=0;i<spin_dimension_bse_hamiltonian;i++){
 	//	for(int j=0;j<spin_dimension_bse_hamiltonian;j++)
@@ -2278,7 +2283,7 @@ void Excitonic_Hamiltonian::print(vec excitonic_momentum,double epsilon,double e
 
 	cout<<"Eigenvalues..."<<endl;
 	tuple<vec,cx_mat,cx_mat> eigenvalues_and_eigenstates_rho_cv;
-	eigenvalues_and_eigenstates_rho_cv=pull_eigenstates_through_cholesky_way(excitonic_momentum,epsilon,eta);
+	eigenvalues_and_eigenstates_rho_cv=pull_eigenstates_through_cholesky_way(excitonic_momentum,eta);
 	vec eigenvalues=get<0>(eigenvalues_and_eigenstates_rho_cv);
 	cx_mat eigenstates=get<1>(eigenvalues_and_eigenstates_rho_cv);
 	for (int i=0;i<spin_dimension_bse_hamiltonian;i++)
@@ -2287,11 +2292,11 @@ void Excitonic_Hamiltonian::print(vec excitonic_momentum,double epsilon,double e
 
 int main()
 {
-	double fermi_energy = 6.5343;
+	double fermi_energy = 5.5427;
 	////Initializing Lattice
 	string file_crystal_bravais_name="bravais.lattice_si.data";
 	string file_crystal_coordinates_name="atoms_si.data";
-	int number_atoms=8;
+	int number_atoms=2;
 	Crystal_Lattice crystal(file_crystal_bravais_name,file_crystal_coordinates_name,number_atoms);
 	double volume=crystal.pull_volume();
 	crystal.print();
@@ -2300,14 +2305,14 @@ int main()
 	vec shift; shift.zeros(3);
 	K_points k_points(&crystal,shift);
 	string file_k_points_name="k_points_list_si.dat";
-	int number_k_points_list=16;
+	int number_k_points_list=64;
 	k_points.push_k_points_list_values(file_k_points_name,number_k_points_list);
 	mat k_points_list=k_points.pull_k_points_list_values();
 	k_points.print();
 
 	//////Initializing g points list
-	double cutoff_g_points_list=5; int dimension_g_points_list=3;
-	vec direction_cutting(3); direction_cutting(0)=1; direction_cutting(1)=1; direction_cutting(2)=0;
+	double cutoff_g_points_list=10; int dimension_g_points_list=3;
+	vec direction_cutting(3); direction_cutting(0)=1; direction_cutting(1)=1; direction_cutting(2)=1;
 	G_points g_points(&crystal,cutoff_g_points_list,dimension_g_points_list,direction_cutting,shift);
 	mat g_points_list=g_points.pull_g_points_list_values(); 
 	int number_g_points_list=g_points.pull_number_g_points_list();
@@ -2329,7 +2334,8 @@ int main()
 	bool dynamic_shifting=false;
 	int spinorial_calculation = 0;
 	double little_shift=0.00;
-	Hamiltonian_TB htb(wannier90_hr_file_name,wannier90_centers_file_name,fermi_energy,spinorial_calculation,number_atoms,dynamic_shifting,little_shift);
+	double scissor_operator=0.00;
+	Hamiltonian_TB htb(wannier90_hr_file_name,wannier90_centers_file_name,fermi_energy,spinorial_calculation,number_atoms,dynamic_shifting,little_shift,scissor_operator);
 	/// 0 no spinors, 1 collinear spinors, 2 non-collinear spinors (implementing 0 and 1 cases)
 	int number_wannier_centers=htb.pull_number_wannier_functions();
 	int htb_basis_dimension=htb.pull_htb_basis_dimension();
@@ -2340,8 +2346,8 @@ int main()
 	//htb.print_ks_states(k_point,10,10);
 
 	//////Initializing dipole elements
-	int number_conduction_bands_selected=5;
-	int number_valence_bands_selected=16;
+	int number_conduction_bands_selected=8;
+	int number_valence_bands_selected=8;
 	Dipole_Elements dipole_elements(number_k_points_list,k_points_list,number_g_points_list,g_points_list,number_wannier_centers,number_valence_bands_selected,number_conduction_bands_selected,&htb,spinorial_calculation);
 	vec excitonic_momentum; excitonic_momentum.zeros(3);
 	excitonic_momentum(0)=minval;
@@ -2349,8 +2355,8 @@ int main()
 
 	/////////Initializing dielectric function
 	Dielectric_Function dielectric_function(&dipole_elements,number_k_points_list,number_g_points_list,g_points_list,number_valence_bands_selected,number_conduction_bands_selected,&coulomb_potential,spinorial_calculation);
-	cx_double omega; omega=0.0; double eta=0.10; double PPA=27.00;
-	int number_omegas_path=100;
+	cx_double omega; omega=0.0; double eta=0.01; double PPA=27.00;
+	int number_omegas_path=200;
 	cx_vec omegas_path(number_omegas_path);
 	cx_double max_omega=5.00;
 	cx_double min_omega=0.00;
@@ -2361,12 +2367,12 @@ int main()
 	//dielectric_function.pull_macroscopic_value(omegas_path,number_omegas_path,eta,file_macroscopic_dielectric_function_name);
 
 	////////Initializing BSE hamiltonian
-	double epsilon=0.1; int adding_screening=1;
+	int adding_screening=1;
 	Excitonic_Hamiltonian htbse(number_valence_bands_selected,number_conduction_bands_selected,&coulomb_potential,&dielectric_function,&htb,&dipole_elements,k_points_list,number_k_points_list,g_points_list,number_g_points_list,spinorial_calculation,adding_screening);
-	///htbse.print(excitonic_momentum,epsilon,eta);
+	///htbse.print(excitonic_momentum,eta);
 	/////calculation optical spectrum
 	string file_macroscopic_dielectric_function_bse_name="macroscopic_diel_func_bse.dat";
-	htbse.pull_macroscopic_bse_dielectric_function(omegas_path,number_omegas_path,eta,epsilon,file_macroscopic_dielectric_function_bse_name);
+	htbse.pull_macroscopic_bse_dielectric_function(omegas_path,number_omegas_path,eta,file_macroscopic_dielectric_function_bse_name);
 
 	return 1;
 }
