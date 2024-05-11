@@ -1,6 +1,10 @@
 # BSE
-BSE from a Tigh-Binding hamiltonian
+BSE from a Tigh-Binding Hamiltonian
+(q->0 implemented, but the structure to consider also the q\neq0 is built)
 
-if you wanna partecipate in the building process, write me
 
-next future: a package to do also GW... 
+Magnetic and Not-Magnetic Systems
+
+debugging the Excitonic-Hamiltonian Part
+
+
