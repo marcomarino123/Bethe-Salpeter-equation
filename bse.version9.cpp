@@ -28,7 +28,7 @@ const double minval = 1.0e-6;
 const double pigreco = 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679;
 const double electron_charge = 1.602176634;
 const double vacuum_dielectric_constant = 8.8541878128;
-const double conversionNmtoeV = 1.0e-12a;
+const double conversionNmtoeV = 1.0e-12;
 const double hbar = 6.582119569;
 /// [hc]=eV*Ang 12.400 = Ry*Ang 911.38246268
 const double hc = 911.38246268;
@@ -1009,7 +1009,7 @@ tuple<cx_mat,cx_mat> Dipole_Elements::pull_values(vec excitonic_momentum,vec q_p
 							ks_state.submat(spin_channel*spin_htb_basis_dimension,m,(spin_channel+1)*spin_htb_basis_dimension-1,m);
 					}
 					for(int n=0;n<number_valence_plus_conduction;n++)
-						energies(spin_channel,m*number_valence_plus_conduction*effective_number_k_points_list+n*effective_number_k_points_list+pair_k_points(i,0)*number_k_points_list+pair_k_points(i,1)).real(ks_energy(spin_channel,m)-ks_energy(spin_channel,n));
+						energies(spin_channel,m*number_valence_plus_conduction*effective_number_k_points_list+n*effective_number_k_points_list+pair_k_points(i,0)*number_k_points_list+pair_k_points(i,1)).real(ks_energy(spin_channel,m)-ks_energy_q(spin_channel,n));
 				}
 			}
 	}
@@ -1026,13 +1026,13 @@ tuple<cx_mat,cx_mat> Dipole_Elements::pull_values(vec excitonic_momentum,vec q_p
 	}
 	if(diagonal_k==1){
 		///extracting energy differences Conduction - Valence
-		cx_mat energies_cv((spinorial_calculation+1),number_conduction_bands*number_valence_bands*number_k_points_list);
+		cx_mat energies_vc((spinorial_calculation+1),number_conduction_bands*number_valence_bands*number_k_points_list);
 		for(int spin_channel=0;spin_channel<(spinorial_calculation+1);spin_channel++)
 			for(int v=0;v<number_valence_bands;v++)
 				for(int c=0;c<number_conduction_bands;c++)
 					for(int k=0;k<number_k_points_list;k++)
-						energies_cv(spin_channel,c*number_valence_bands*number_k_points_list+v*number_k_points_list+k)=energies(spin_channel,v*number_valence_plus_conduction*number_k_points_list+(number_valence_bands+c)*number_k_points_list+k);
-		return{energies_cv,rho};
+						energies_vc(spin_channel,c*number_valence_bands*number_k_points_list+v*number_k_points_list+k)=energies(spin_channel,v*number_valence_plus_conduction*number_k_points_list+(number_valence_bands+c)*number_k_points_list+k);
+		return{energies_vc,rho};
 	}else
 		return {energies,rho};	
 };
@@ -1370,7 +1370,7 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_and_rcv(v
 	cx_vec v_coulomb_g(number_g_points_list);
 	for (int k = 0; k < number_g_points_list; k++){
 		for (int s = 0; s < number_g_points_list; s++)
-			v_coulomb_qg(k,s) = epsilon_inv_static(k,s)*coulomb_potential->pull(excitonic_momentum+g_points_list.col(k));
+			v_coulomb_qg(k,s) = epsilon_inv_static(k,s)*coulomb_potential->pull(-(excitonic_momentum+g_points_list.col(s)));
 		v_coulomb_g(k) = coulomb_potential->pull(g_points_list.col(k));
 	}
 
@@ -1384,6 +1384,7 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_and_rcv(v
 		minus_excitonic_momentum(i)=-1.0*excitonic_momentum(i);
 	tuple<cx_mat,cx_mat> energies_rho_q_diagk=dipole_elements->pull_values(excitonic_momentum,zeros_vec,excitonic_momentum,1);
 	cx_mat rho_q_diagk_cv=dipole_elements->pull_reduced_values_cv(get<1>(energies_rho_q_diagk),1);
+	cx_mat energies_q=get<0>(energies_rho_q_diagk);
 	cx_mat v_matrix(spin_dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian,fill::zeros);
 	cx_mat temporary_matrix1((spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list,number_g_points_list);
 	for(int i=0;i<(spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list;i++)
@@ -1394,8 +1395,8 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_and_rcv(v
 				conj(rho_q_diagk_cv.submat(i*number_conduction_bands*number_valence_bands*number_k_points_list,0,(1+i)*number_conduction_bands*number_valence_bands*number_k_points_list-1,number_g_points_list-1))
 				*(temporary_matrix1.submat(j*number_conduction_bands*number_valence_bands*number_k_points_list,0,(j+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,number_g_points_list-1)).t();
 	
-	//(get<0>(energies_rho_q_diagk)).reset();
-	//(get<1>(energies_rho_q_diagk)).reset();
+	(get<0>(energies_rho_q_diagk)).reset();
+	(get<1>(energies_rho_q_diagk)).reset();
 
 	///building w
 	cout<<"building w"<<endl;
@@ -1410,9 +1411,9 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_and_rcv(v
 	(get<1>(energies_rho_qq_kk)).reset();
 
 	cx_mat temporary_matrix2((spinorial_calculation+1)*number_conduction_bands*number_conduction_bands*number_k_points_list*number_k_points_list,number_g_points_list);
-	temporary_matrix2=rho_kk_cc*v_coulomb_qg;
+	temporary_matrix2=conj(rho_kk_cc)*v_coulomb_qg;
 	cx_mat temporary_matrix3((spinorial_calculation+1)*number_valence_bands*number_valence_bands*number_k_points_list*number_k_points_list,(spinorial_calculation+1)*number_conduction_bands*number_conduction_bands*number_k_points_list*number_k_points_list);
-	temporary_matrix3=(temporary_matrix2)*conj(rho_qq_kk_vv.t());
+	temporary_matrix3=(temporary_matrix2)*(rho_qq_kk_vv.t());
 	temporary_matrix2.reset();
 	///ordering the w matrix
 	field<umat> col_indices(spinorial_calculation+1);
@@ -1472,25 +1473,25 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_and_rcv(v
 
 		temporary_matrix1.reset();
 		rho_p_diagk_vc.reset();
-		//(get<0>(energies_rho_p_diagk)).reset();
-		//(get<1>(energies_rho_p_diagk)).reset();
+		(get<0>(energies_rho_p_diagk)).reset();
+		(get<1>(energies_rho_p_diagk)).reset();
 
 		///building W
 		cout<<"building w"<<endl;
-		tuple<cx_mat,cx_mat> energies_rho_q_kk=dipole_elements->pull_values(excitonic_momentum,zeros_vec,minus_excitonic_momentum,0);
-		cx_mat rho_q_kk_cv=dipole_elements->pull_reduced_values_cv(get<1>(energies_rho_q_kk),0);
-		tuple<cx_mat,cx_mat> energies_rho_p_kk=dipole_elements->pull_values(excitonic_momentum,excitonic_momentum,zeros_vec,0);
+		tuple<cx_mat,cx_mat> energies_rho_p_kk=dipole_elements->pull_values(excitonic_momentum,minus_excitonic_momentum,zeros_vec,0);
 		cx_mat rho_p_kk_vc=dipole_elements->pull_reduced_values_vc(get<1>(energies_rho_p_kk),0);
-		//(get<0>(energies_rho_p_kk)).reset();
-		//(get<1>(energies_rho_p_kk)).reset();
-		//(get<0>(energies_rho_q_kk)).reset();
-		//(get<1>(energies_rho_q_kk)).reset();
+		tuple<cx_mat,cx_mat> energies_rho_q_kk=dipole_elements->pull_values(excitonic_momentum,zeros_vec,excitonic_momentum,0);
+		cx_mat rho_q_kk_cv=dipole_elements->pull_reduced_values_cv(get<1>(energies_rho_q_kk),0);
+		(get<0>(energies_rho_p_kk)).reset();
+		(get<1>(energies_rho_p_kk)).reset();
+		(get<0>(energies_rho_q_kk)).reset();
+		(get<1>(energies_rho_q_kk)).reset();
 
 		cx_mat temporary_matrix6((spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list*number_k_points_list,number_g_points_list);
-		temporary_matrix6=rho_q_kk_cv*v_coulomb_qg;
+		temporary_matrix6=conj(rho_q_kk_cv)*v_coulomb_qg;
 		rho_q_kk_cv.reset();
 		cx_mat temporary_matrix7((spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list*number_k_points_list,(spinorial_calculation+1)*number_valence_bands*number_conduction_bands*number_k_points_list*number_k_points_list);
-		temporary_matrix7=temporary_matrix6*conj(rho_p_kk_vc.t());
+		temporary_matrix7=temporary_matrix6*(rho_p_kk_vc.t());
 		rho_p_kk_vc.reset();
 
 		///ordering the w matrix
@@ -1538,33 +1539,30 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_and_rcv(v
 	}
 
 	///separated == 1 gives H00=Resonant Part H11=Coupling Part
-	tuple<cx_mat,cx_mat> energies_rho_diagk=dipole_elements->pull_values(excitonic_momentum,zeros_vec,zeros_vec,1);
-	cx_mat energies_0=get<0>(energies_rho_diagk);
-	(get<0>(energies_rho_diagk)).reset();
-	(get<1>(energies_rho_diagk)).reset();
-	cx_vec energies_0_cv((spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list);
+	///rewriting energies in order to obtain something that can be summed to the rest
+	cx_vec energies_q_vc((spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list);
 	for(int spin=0;spin<(spinorial_calculation+1);spin++)
 		for(int c=0;c<number_conduction_bands;c++)
 			for(int v=0;v<number_valence_bands;v++){
-				energies_0_cv.subvec(spin*number_conduction_bands*number_valence_bands*number_k_points_list+c*number_valence_bands*number_k_points_list+v*number_k_points_list,spin*number_conduction_bands*number_valence_bands*number_k_points_list+c*number_valence_bands*number_k_points_list+(v+1)*number_k_points_list-1)=energies_0.submat(spin,v*number_conduction_bands*number_k_points_list+c*number_k_points_list,spin,v*number_conduction_bands*number_k_points_list+(c+1)*number_k_points_list-1).t();
+				energies_q_vc.subvec(spin*number_conduction_bands*number_valence_bands*number_k_points_list+c*number_valence_bands*number_k_points_list+v*number_k_points_list,spin*number_conduction_bands*number_valence_bands*number_k_points_list+c*number_valence_bands*number_k_points_list+(v+1)*number_k_points_list-1)=energies_q.submat(spin,v*number_conduction_bands*number_k_points_list+c*number_k_points_list,spin,v*number_conduction_bands*number_k_points_list+(c+1)*number_k_points_list-1).t();
 				//cout<<energies_0_cv.subvec(spin*number_conduction_bands*number_valence_bands*number_k_points_list+c*number_valence_bands*number_k_points_list+v*number_k_points_list,spin*number_conduction_bands*number_valence_bands*number_k_points_list+c*number_valence_bands*number_k_points_list+(v+1)*number_k_points_list-1)<<endl;
 			}
 	/// saving memory for the BSE matrix (kernel)
 	cx_mat excitonic_hamiltonian(2*spin_dimension_bse_hamiltonian,2*spin_dimension_bse_hamiltonian);
 	///cout<<"volume"<<volume_cell<<endl;
-	w_matrix=w_matrix/(number_k_points_list*volume_cell);
-	w_matrix_c=w_matrix_c/(number_k_points_list*volume_cell);
-	v_matrix=v_matrix/(number_k_points_list*volume_cell);
-	v_matrix_c=v_matrix/(number_k_points_list*volume_cell);
+	w_matrix=w_matrix/(number_k_points_list);
+	w_matrix_c=w_matrix_c/(number_k_points_list);
+	v_matrix=v_matrix/(number_k_points_list);
+	v_matrix_c=v_matrix/(number_k_points_list);
 	if (separated==0){
 		///building excitonic hamiltonian in the case of q-->0 (in other cases it is necessary to build the other entries correctly)
 		excitonic_hamiltonian.submat(0,0,spin_dimension_bse_hamiltonian-1,spin_dimension_bse_hamiltonian-1)=((2-spinorial_calculation)*v_matrix-w_matrix);
 		excitonic_hamiltonian.submat(spin_dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian,2*spin_dimension_bse_hamiltonian-1,2*spin_dimension_bse_hamiltonian-1)=-(conj((2-spinorial_calculation)*v_matrix-w_matrix));
 		for(int i=0;i<(spinorial_calculation+1);i++){
 			excitonic_hamiltonian.submat(i*3*number_conduction_bands*number_valence_bands*number_k_points_list,i*3*number_conduction_bands*number_valence_bands*number_k_points_list,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)+=
-				diagmat(-energies_0_cv.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1));
+				diagmat(-energies_q_vc.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1));
 			excitonic_hamiltonian.submat(spin_dimension_bse_hamiltonian+i*3*number_conduction_bands*number_valence_bands*number_k_points_list,spin_dimension_bse_hamiltonian+i*3*number_conduction_bands*number_valence_bands*number_k_points_list,spin_dimension_bse_hamiltonian+(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,spin_dimension_bse_hamiltonian+(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)+=
-				diagmat(conj(energies_0_cv.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)));
+				diagmat(conj(energies_q_vc.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)));
 		}
 		excitonic_hamiltonian.submat(0,spin_dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian-1,2*spin_dimension_bse_hamiltonian-1)=((2-spinorial_calculation)*v_matrix_c-w_matrix_c);
 		excitonic_hamiltonian.submat(spin_dimension_bse_hamiltonian,0,2*spin_dimension_bse_hamiltonian-1,spin_dimension_bse_hamiltonian-1)=-((conj((2-spinorial_calculation)*v_matrix_c-w_matrix_c))).t();
@@ -1573,7 +1571,7 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_excitonic_hamiltonian_and_rcv(v
 		excitonic_hamiltonian.submat(0,0,spin_dimension_bse_hamiltonian-1,spin_dimension_bse_hamiltonian-1)=v_matrix-w_matrix;
 		for(int i=0;i<2;i++)
 			excitonic_hamiltonian.submat(i*3*number_conduction_bands*number_valence_bands*number_k_points_list,i*3*number_conduction_bands*number_valence_bands*number_k_points_list,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1,(i*3+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1)+=
-				+diagmat(-energies_0_cv.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1));
+				+diagmat(-energies_q_vc.subvec(i*number_conduction_bands*number_valence_bands*number_k_points_list,(i+1)*number_conduction_bands*number_valence_bands*number_k_points_list-1));
 		excitonic_hamiltonian.submat(spin_dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian,2*spin_dimension_bse_hamiltonian-1,2*spin_dimension_bse_hamiltonian-1)=v_matrix_c-w_matrix_c;
 		return {excitonic_hamiltonian,rho_q_diagk_cv};
 	}
