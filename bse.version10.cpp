@@ -1045,7 +1045,6 @@ tuple<cx_mat,cx_mat> Dipole_Elements::pull_values(vec excitonic_momentum,vec p_p
 		
 		return {energies,rho};
 	}else{
-		cout<<"qua1"<<endl;
 		cx_mat energies((spinorial_calculation+1),effective_number_k_points_list*number_valence_plus_conduction*number_valence_plus_conduction,fill::zeros);
 		cx_cube ks_states_k_points(htb_basis_dimension,number_valence_plus_conduction,number_k_points_list);
 		cx_cube ks_states_k_points_q(htb_basis_dimension,number_valence_plus_conduction,number_k_points_list);
@@ -1053,7 +1052,6 @@ tuple<cx_mat,cx_mat> Dipole_Elements::pull_values(vec excitonic_momentum,vec p_p
 			ks_states_k_points.slice(i) = get<1>(hamiltonian_tb->pull_ks_states_subset(k_points_list.col(i)-p_parameter,number_valence_bands,number_conduction_bands));
 			ks_states_k_points_q.slice(i) = get<1>(hamiltonian_tb->pull_ks_states_subset(k_points_list.col(i)-q_parameter,number_valence_bands,number_conduction_bands));
 		}
-		cout<<"qua1"<<endl;
 		///#pragma omp parallel for private(ks_states_k_point,ks_state,ks_energy)
 		///for(int i=0;i<number_k_points_list;i++){
 		///	ks_states_k_point = hamiltonian_tb->pull_ks_states_subset(k_points_list.col(i)-p_parameter,number_valence_bands,number_conduction_bands);
@@ -1080,7 +1078,6 @@ tuple<cx_mat,cx_mat> Dipole_Elements::pull_values(vec excitonic_momentum,vec p_p
 								ks_states_k_points.subcube(spin_channel*spin_htb_basis_dimension,m,i,(spin_channel+1)*spin_htb_basis_dimension-1,m,i);
 						}
 					}
-		cout<<"qua1"<<endl;
 		for(int spin_channel=0;spin_channel<(spinorial_calculation+1);spin_channel++){
 			//#pragma omp parallel for collapse(2) private(spin_channel)
 			for(int m=0;m<number_valence_plus_conduction;m++)
@@ -1528,12 +1525,10 @@ tuple<cx_mat,cx_mat> Excitonic_Hamiltonian::pull_resonant_part_and_rcv(vec excit
 	///building w
 	cout<<"building w"<<endl;
 	cx_mat w_matrix(spin_dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian,fill::zeros);
-	cout<<"qua"<<endl;
 	cx_mat rho_kk_cc((spinorial_calculation+1)*number_conduction_bands*number_conduction_bands*number_k_points_list*number_k_points_list,number_g_points_list);
 	cx_mat rho_qq_kk_vv((spinorial_calculation+1)*number_valence_bands*number_valence_bands*number_k_points_list*number_k_points_list,number_g_points_list);
 	rho_kk_cc=dipole_elements->pull_reduced_values_cc_vv(get<1>(dipole_elements->pull_values(excitonic_momentum,zeros_vec,zeros_vec,0)),0,0,0);
 	rho_qq_kk_vv=dipole_elements->pull_reduced_values_cc_vv(get<1>(dipole_elements->pull_values(excitonic_momentum,excitonic_momentum,excitonic_momentum,0)),1,0,0);
-	cout<<"qua"<<endl;
 	umat diag_indices(number_conduction_bands*number_valence_bands*number_k_points_list,number_k_points_list);
 	#pragma omp parallel for collapse(4)
 	for(int c=0;c<number_conduction_bands;c++)
