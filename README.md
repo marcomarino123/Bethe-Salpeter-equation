@@ -7,4 +7,6 @@ Magnetic and Not-Magnetic Systems
 
 debugging the Excitonic-Hamiltonian Part
 
+Silicon is going; I will push later next week the corrected equations and the corrected code 
+
 
