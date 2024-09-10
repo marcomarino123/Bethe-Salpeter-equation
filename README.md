@@ -5,8 +5,7 @@ BSE from a Tigh-Binding Hamiltonian
 
 Magnetic and Not-Magnetic Systems
 
-debugging the Excitonic-Hamiltonian Part
+debugging in progress
 
-Silicon is going; I will push later next week the corrected equations and the corrected code 
 
 
