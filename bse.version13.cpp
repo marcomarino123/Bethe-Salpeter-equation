@@ -25,9 +25,10 @@ extern "C"
 }
 
 ///CONSTANT
-const double minval = 1.0e-6;
+const double minval = 1.0e-5;
 const double pigreco = 3.1415926535897932384626433832;
 ///being bravais lattice in Ang, k points are in crystal coordinates and then transformed in Ang^{-1}
+///const double conversion_parameter = (10000)/(55.26349406);
 const double conversion_parameter = (1.602176634*1000)/(8.8541878176);
 
 ////FUNCTIONS
@@ -408,6 +409,7 @@ class Hamiltonian_TB
 private:
 	int spinorial_calculation;
 	int number_wannier_functions;
+	int looking_from_fermi;
 	int htb_basis_dimension;
 	int number_atoms;
 	int number_primitive_cells;
@@ -430,7 +432,7 @@ public:
 		dynamic_shifting = false;
 	};
 	/// reading hamiltonian from wannier90 output
-	Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp,double scissor_operator_tmp,arma::mat bravais_lattice_tmp,int number_primitive_cells_tmp,int number_wannier_functions_tmp);
+	Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp,double scissor_operator_tmp,arma::mat bravais_lattice_tmp,int number_primitive_cells_tmp,int number_wannier_functions_tmp,int looking_from_fermi_tmp);
 	arma::field<arma::cx_mat> FFT(arma::vec k_point);
 	std::tuple<arma::mat,arma::cx_mat> pull_ks_states(arma::vec k_point);
 	std::tuple<arma::mat,arma::cx_mat> pull_ks_states_subset(arma::vec k_point,int number_valence_bands_selected,int number_conduction_bands_selected);
@@ -455,7 +457,7 @@ public:
 		dynamic_shifting = false;
 	};
 };
-Hamiltonian_TB::Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp,double scissor_operator_tmp,arma::mat bravais_lattice_tmp,int number_primitive_cells_tmp,int number_wannier_functions_tmp):
+Hamiltonian_TB::Hamiltonian_TB(string wannier90_hr_file_name,string wannier90_centers_file_name,double fermi_energy_tmp,int spinorial_calculation_tmp,int number_atoms_tmp,bool dynamic_shifting_tmp,double little_shift_tmp,double scissor_operator_tmp,arma::mat bravais_lattice_tmp,int number_primitive_cells_tmp,int number_wannier_functions_tmp,int looking_from_fermi_tmp):
 weights_primitive_cells(number_primitive_cells_tmp), positions_primitive_cells(3,number_primitive_cells_tmp)
 {
 	cout<<"Be Carefull: if you are doing a collinear spin calculation, the number of Wannier functions in the two spin channels has to be the same!!"<<endl;
@@ -476,6 +478,7 @@ weights_primitive_cells(number_primitive_cells_tmp), positions_primitive_cells(3
 	int counting_primitive_cells_check;
 	hamiltonian.set_size(spinorial_calculation+1);
 	wannier_centers.set_size(spinorial_calculation+1);
+	looking_from_fermi=looking_from_fermi_tmp;
 
 	cout<<"Reading Hamiltonian..."<<endl;
 	int total_elements;
@@ -731,7 +734,7 @@ std::tuple<arma::mat, arma::cx_mat> Hamiltonian_TB::pull_ks_states(arma::vec k_p
 				else
 					ks_eigenvectors_spinor(j, i) = eigenvectors_down(j - number_wannier_functions, ordering_down(i));
 			}
-			ks_eigenvectors_spinor.col(i) = ks_eigenvectors_spinor.col(i) / norm(ks_eigenvectors_spinor.col(i), 2);
+			ks_eigenvectors_spinor.col(i) = ks_eigenvectors_spinor.col(i);// / norm(ks_eigenvectors_spinor.col(i), 2);
 			for (int r = 0; r < 2; r++)
 				ks_eigenvalues_spinor(r, i) = (1 - r) * real(eigenvalues_up(ordering_up(i))) + r * real(eigenvalues_down(ordering_down(i)));
 		}
@@ -739,23 +742,32 @@ std::tuple<arma::mat, arma::cx_mat> Hamiltonian_TB::pull_ks_states(arma::vec k_p
 		return {ks_eigenvalues_spinor, ks_eigenvectors_spinor};
 	
 	}else{
-		arma::field<arma::cx_mat> fft_hamiltonian = FFT(k_point);
-		
+		arma::cx_mat fft_hamiltonian = FFT(k_point)(0);
+		///fft_hamiltonian=(fft_hamiltonian+arma::conj(fft_hamiltonian.t()))/2;
+	///	cout<<"hamiltonian is hermitian "<< arma::accu(fft_hamiltonian-arma::conj(fft_hamiltonian.t()))<< endl;
+
 		arma::vec eigenvalues;
 		arma::cx_mat eigenvectors;
-		arma::eig_sym(eigenvalues,eigenvectors,fft_hamiltonian(0));
+		arma::eig_sym(eigenvalues,eigenvectors,fft_hamiltonian,"std");
 
 		arma::uvec ordering = arma::sort_index(eigenvalues);
 
 		/// in the case of spinorial_calculation=1 combining the two components of spin into a single spinor
 		/// saving the ordered eigenvectors in the matrix ks_eigenvectors_spinor
 		///#pragma omp parallel for collapse(2)
-		for (int i = 0; i < number_wannier_functions; i++)
-			for (int j = 0; j < htb_basis_dimension; j++){
-				ks_eigenvectors_spinor(j, i) = eigenvectors(j, ordering(i))/arma::vecnorm(eigenvectors.col(ordering(i)));
+		double normalization=0;
+		for (int i = 0; i < htb_basis_dimension; i++){
+			ks_eigenvectors_spinor.col(i) = eigenvectors.col(ordering(i))/(arma::vecnorm(eigenvectors.col(ordering(i))));
+			///for (int s = 0; s < htb_basis_dimension; s++)
+			///	if(std::imag(ks_eigenvectors_spinor(s,i))!=0){
+			///		normalization=std::imag(ks_eigenvectors_spinor(s,i));
+			///		break;
+			///	}
+			///for (int s = 0; s < htb_basis_dimension; s++)
+			///	ks_eigenvectors_spinor(s,i).imag(std::imag(ks_eigenvectors_spinor(s,i))/normalization);
 			}
 
-		for (int i = 0; i < number_wannier_functions; i++){
+		for (int i = 0; i < htb_basis_dimension; i++){
 			ks_eigenvalues_spinor(0,i)=real(eigenvalues(ordering(i)));
 			ks_eigenvalues_spinor(1,i)=real(eigenvalues(ordering(i)));
 		}
@@ -771,29 +783,31 @@ std::tuple<arma::mat,arma::cx_mat> Hamiltonian_TB::pull_ks_states_subset(arma::v
 	spinor_scissor_operator(0)=scissor_operator;
 	spinor_scissor_operator(1)=scissor_operator;
 	
-	arma::mat ks_eigenvalues(2,number_wannier_functions, arma::fill::zeros);
-	arma::cx_mat ks_eigenvectors(htb_basis_dimension, number_wannier_functions, arma::fill::zeros);
-	std::tuple<arma::mat,arma::cx_mat> ks_states(ks_eigenvalues,ks_eigenvectors);
-	ks_states=pull_ks_states(k_point);
-	ks_eigenvalues=get<0>(ks_states);
-	ks_eigenvectors=get<1>(ks_states);
+	std::tuple<arma::mat,arma::cx_mat> ks_states=pull_ks_states(k_point);
+	arma::mat ks_eigenvalues=get<0>(ks_states);
+	arma::cx_mat ks_eigenvectors=get<1>(ks_states);
 
-	/// distinguishing between valence and conduction states
-	for (int i = 0; i < number_wannier_functions; i++){
-		///cout<<ks_eigenvalues(0, i)<<" "<<ks_eigenvalues(1, i)<<endl; 
-		if (ks_eigenvalues(0, i)<=fermi_energy && ks_eigenvalues(1, i)<=fermi_energy)
-			number_valence_bands++;
-		else
-			number_conduction_bands++;
+	if(looking_from_fermi==1){
+		/// distinguishing between valence and conduction states
+		for (int i = 0; i < number_wannier_functions; i++){
+			///cout<<ks_eigenvalues(0, i)<<" "<<ks_eigenvalues(1, i)<<endl; 
+			if (ks_eigenvalues(0, i)<=fermi_energy && ks_eigenvalues(1, i)<=fermi_energy)
+				number_valence_bands++;
+			else
+				number_conduction_bands++;
+		}
+		///cout<<"Number valence bands "<<number_valence_bands<<" Number conduction bands "<<number_conduction_bands<<endl;
+	}else{
+		number_valence_bands = number_conduction_bands_selected;
+		number_conduction_bands = number_valence_bands_selected;
 	}
-	//cout<<"Number valence bands "<<number_valence_bands<<" Number conduction bands "<<number_conduction_bands<<endl;
-	
+
 	/// in a single matrix: first are written valence states, than (at higher rows) conduction states
 	/// converting from eV to Ang^{-1}	
 	arma::mat ks_eigenvalues_subset(2, dimensions_subspace);
 	arma::cx_mat ks_eigenvectors_subset(htb_basis_dimension, dimensions_subspace);
 	for (int i = 0; i < dimensions_subspace; i++){
-		///cout<<ks_eigenvalues.col(i)<<endl;
+		///cout<<"eigenvalues "<<ks_eigenvalues.col(i)<<endl;
 		if (i < number_valence_bands_selected){
 			ks_eigenvectors_subset.col(i) = ks_eigenvectors.col((number_valence_bands - 1) - i);
 			ks_eigenvalues_subset.col(i) = ks_eigenvalues.col((number_valence_bands - 1) - i);
@@ -972,12 +986,12 @@ public:
 			for(int r=0;r<3;r++)
 				wannier_file<<(supercell_axis.col(r)*number_unit_cells_supercell(r)).t();
 			for(int spin=0;spin<(spinorial_calculation+1);spin++)
-				for(int i=0;i<number_unit_cells_supercell(0);i++)
-					for(int j=0;j<number_unit_cells_supercell(1);j++)
-						for(int k=0;k<number_unit_cells_supercell(2);k++)
-							for(int s=0;s<number_points_real_space_grid_percell(0);s++)
-								for(int t=0;t<number_points_real_space_grid_percell(1);t++)
-									for(int l=0;l<number_points_real_space_grid_percell(2);l++){
+				for(int k=0;k<number_unit_cells_supercell(2);k++)	
+					for(int l=0;l<number_points_real_space_grid_percell(2);l++)
+						for(int j=0;j<number_unit_cells_supercell(1);j++)
+							for(int t=0;t<number_points_real_space_grid_percell(1);t++)
+								for(int i=0;i<number_unit_cells_supercell(0);i++)
+									for(int s=0;s<number_points_real_space_grid_percell(0);s++){
 										temporary=real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+which_wannier_function*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k);
 										///cout<<temporary<<endl;
 										///if(temporary>max_value){
@@ -1132,7 +1146,9 @@ real_space_wannier_functions_list(number_points_real_space_grid_tmp(0)*number_po
 
 			}
 			wannier_file_xsf.close();
-			normalize=normalize/(double(number_points_real_space_grid_total));
+			//normalize=normalize/(double(number_points_real_space_grid_total));
+			normalize=normalize*(number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*cell_volume)/(number_points_real_space_grid_total);
+	
 
 			double testing_normalization=0.0;
 			for(int i=0;i<number_unit_cells_supercell(0);i++)
@@ -1141,11 +1157,27 @@ real_space_wannier_functions_list(number_points_real_space_grid_tmp(0)*number_po
 						for(int s=0;s<number_points_real_space_grid_percell(0);s++)
 							for(int t=0;t<number_points_real_space_grid_percell(1);t++)
 								for(int l=0;l<number_points_real_space_grid_percell(2);l++){
-									real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k)=real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k)/sqrt(normalize);
+									real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k)=real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k)/(std::sqrt(normalize));
 									testing_normalization=testing_normalization+(real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k))*real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k);
 								}
-			////cout<<"normalization "<<normalize<<" "<<testing_normalization/double(number_points_real_space_grid_total)<<endl;
-		}
+			cout<<"TESTING "<<testing_normalization*(number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*cell_volume)/(number_points_real_space_grid_total)<<endl;
+	}
+	cout<<"TESTING ORTHOGONALITY"<<endl;
+	double testing_normalization;
+	for(int w1=0;w1<number_wannier_functions;w1++)
+		for(int w2=0;w2<number_wannier_functions;w2++){
+			testing_normalization=0;
+			for(int spin=0;spin<(spinorial_calculation+1);spin++)
+				for(int i=0;i<number_unit_cells_supercell(0);i++)
+					for(int j=0;j<number_unit_cells_supercell(1);j++)
+						for(int k=0;k<number_unit_cells_supercell(2);k++)
+							for(int s=0;s<number_points_real_space_grid_percell(0);s++)
+								for(int t=0;t<number_points_real_space_grid_percell(1);t++)
+									for(int l=0;l<number_points_real_space_grid_percell(2);l++)
+										testing_normalization=testing_normalization+(real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w1*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k))*real_space_wannier_functions_list(s*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t*number_points_real_space_grid_percell(2)+l,spin*number_wannier_functions*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+w2*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j*number_unit_cells_supercell(2)+k);
+			testing_normalization=testing_normalization*(number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*cell_volume)/(number_points_real_space_grid_total);
+			cout<<w1<<" "<<w2<<" "<<testing_normalization<<endl;
+			}	
 
 		////normalizing spurcell axis
 		for(int p=0;p<3;p++)
@@ -1308,14 +1340,17 @@ private:
 	arma::vec origin{arma::vec(3)};
 	arma::vec origin_unitcell{arma::vec(3)};
 	arma::mat real_space_wannier_functions_list;
+	double radius_building_kernel;
+	double threshold_building_kernel;
 public:
-	Dipole_Elements(int number_k_points_list_tmp,arma::mat k_points_list_tmp, int number_g_points_list_tmp,arma::mat g_points_list_tmp,int number_wannier_centers_tmp,int number_valence_bands_selected_tmp,int number_conduction_bands_selected_tmp, Hamiltonian_TB *hamiltonian_tb_tmp,int spinorial_calculation_tmp,	Real_space_wannier* real_space_wannier_tmp,arma::vec number_primitive_cells_integration_tmp, arma::vec number_unit_cells_supercell_tmp, arma::vec number_points_real_space_grid_tmp);
-	///arma::cx_mat function_building_exponential_factor(arma::vec excitonic_momentum_1,int minus,arma::vec excitonic_momentum_2);
+	Dipole_Elements(int number_k_points_list_tmp,arma::mat k_points_list_tmp, int number_g_points_list_tmp,arma::mat g_points_list_tmp,int number_wannier_centers_tmp,int number_valence_bands_selected_tmp,int number_conduction_bands_selected_tmp, Hamiltonian_TB *hamiltonian_tb_tmp,int spinorial_calculation_tmp,	Real_space_wannier* real_space_wannier_tmp,arma::vec number_primitive_cells_integration_tmp, arma::vec number_unit_cells_supercell_tmp, arma::vec number_points_real_space_grid_tmp,double radius_building_kernel_tmp,double threshold_building_kernel_tmp);
+	arma::field<arma::cx_mat> function_building_exponential_factor(arma::vec excitonic_momentum,int diagonal_k,int minus);
 	///arma::field<arma::mat> function_building_A_matrix(double threshold_proximity);
 	arma::cx_vec function_building_real_space_wannier_dipole_ij(int number_wannier_1,int number_wannier_2,arma::vec excitonic_momentum,arma::vec g_momentum);
-	arma::field<arma::cx_mat> function_building_M_k1k2_ij(arma::vec excitonic_momentum,int diagonal_k);
+	std::tuple<arma::cx_mat,arma::cx_vec>  function_building_real_space_wannier_dipole_ij_small_q(int number_wannier_1,int number_wannier_2,arma::vec g_momentum);
+	arma::field<arma::cx_mat> function_building_M_k1k2_ij(arma::vec excitonic_momentum,int diagonal_k,int small_excitonic_momentum,int radius_convergence);
 	///rho_{n1,n2,k1-p,k2-q}(excitonic_momentum,G)=\bra{n1k1-p}e^{i(excitonic_momentum+G)r\ket{n2k2-q}
-	std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> pull_values(arma::vec excitonic_momentum,arma::vec parameter_l,arma::vec parameter_r,int diagonal_k,int minus,int left,int right,int reverse,int reverse_kk,double threshold_proximity);
+	std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> pull_values(arma::vec excitonic_momentum,arma::vec parameter_l,arma::vec parameter_r,int diagonal_k,int minus,int left,int right,int reverse,int reverse_kk,double threshold_proximity,int small_excitonic_momentum,int radius_convergence);
 ////arma::mat function_translate(arma::mat wannier,int i,int j,int k);
 	void print(arma::vec excitonic_momentum,arma::vec parameter_l,arma::vec parameter_r,int diagonal_k,int minus,int left, int right,double threshold_proximity);
 	arma::mat pull_bravais_lattice(){
@@ -1358,9 +1393,12 @@ public:
 ///};
 
 
-Dipole_Elements::Dipole_Elements(int number_k_points_list_tmp,arma::mat k_points_list_tmp, int number_g_points_list_tmp,arma::mat g_points_list_tmp, int number_wannier_centers_tmp, int number_valence_bands_tmp, int number_conduction_bands_tmp, Hamiltonian_TB *hamiltonian_tb_tmp,int spinorial_calculation_tmp, Real_space_wannier* real_space_wannier_tmp, arma::vec number_primitive_cells_integration_tmp, arma::vec number_unit_cells_supercell_tmp, arma::vec number_points_real_space_grid_tmp):
+Dipole_Elements::Dipole_Elements(int number_k_points_list_tmp,arma::mat k_points_list_tmp, int number_g_points_list_tmp,arma::mat g_points_list_tmp, int number_wannier_centers_tmp, int number_valence_bands_tmp, int number_conduction_bands_tmp, Hamiltonian_TB *hamiltonian_tb_tmp,int spinorial_calculation_tmp, Real_space_wannier* real_space_wannier_tmp, arma::vec number_primitive_cells_integration_tmp, arma::vec number_unit_cells_supercell_tmp, arma::vec number_points_real_space_grid_tmp,double radius_building_kernel_tmp,double threshold_building_kernel_tmp):
 k_points_list(3,number_k_points_list_tmp), g_points_list(3,number_g_points_list_tmp), wannier_centers(spinorial_calculation_tmp+1), indexingi(number_primitive_cells_integration_tmp(0),number_unit_cells_supercell_tmp(0)), indexingj(number_primitive_cells_integration_tmp(1),number_unit_cells_supercell_tmp(1)), indexingk(number_primitive_cells_integration_tmp(2),number_unit_cells_supercell_tmp(2)), real_space_wannier_functions_list(number_points_real_space_grid_tmp(0)*number_points_real_space_grid_tmp(1)*number_points_real_space_grid_tmp(2)/(number_unit_cells_supercell_tmp(0)*number_unit_cells_supercell_tmp(1)*number_unit_cells_supercell_tmp(2)),number_unit_cells_supercell_tmp(0)*number_unit_cells_supercell_tmp(1)*number_unit_cells_supercell_tmp(2)*(spinorial_calculation_tmp+1)*number_wannier_centers_tmp)
 {
+
+	radius_building_kernel=radius_building_kernel_tmp;
+	threshold_building_kernel=threshold_building_kernel_tmp;
 
 	number_g_points_list=number_g_points_list_tmp;
 	number_conduction_bands=number_conduction_bands_tmp;
@@ -1418,183 +1456,470 @@ k_points_list(3,number_k_points_list_tmp), g_points_list(3,number_g_points_list_
 						}
 
 };
-///arma::cx_mat Dipole_Elements::function_building_exponential_factor(arma::vec excitonic_momentum_1,int minus,arma::vec excitonic_momentum_2){
-///	arma::cx_mat exponential_factor_tmp(htb_basis_dimension,number_g_points_list);
-///	double temporary_variable;
-///	arma::vec wannier_center(3);
-///	for(int spin_channel=0;spin_channel<(spinorial_calculation+1);spin_channel++)
-///		for(int g=0; g<number_g_points_list; g++)
-///			for(int i=0; i<spin_htb_basis_dimension; i++){
-///				temporary_variable=0.0;
-///				wannier_center=(wannier_centers(spin_channel)).col(i);
-///				for(int r=0; r<3; r++)
-///					temporary_variable+=(wannier_center(r)*((1-minus*2)*(g_points_list(r,g)+excitonic_momentum_1(r)-excitonic_momentum_2(r))));
-///				exponential_factor_tmp(spin_channel*spin_htb_basis_dimension+i,g).real(cos(temporary_variable));
-///				exponential_factor_tmp(spin_channel*spin_htb_basis_dimension+i,g).imag(sin(temporary_variable));
-///			}
-///	////exponential_factor_tmp(spin_channel*spin_htb_basis_dimension+i,g).real(cos(accu((wannier_centers(spin_channel)).col(i)%((1-minus*2)*(g_points_list.col(g)+excitonic_momentum_1-excitonic_momentum_2)))));
-///	////exponential_factor_tmp(spin_channel*spin_htb_basis_dimension+i,g).imag(sin(accu((wannier_centers(spin_channel)).col(i)%((1-minus*2)*(g_points_list.col(g)+excitonic_momentum_1-excitonic_momentum_2)))));
-///	return exponential_factor_tmp;
-///};
-
-arma::cx_vec Dipole_Elements::function_building_real_space_wannier_dipole_ij(int number_wannier_1,int number_wannier_2,arma::vec excitonic_momentum,arma::vec g_momentum){
-	arma::cx_vec A_matrix((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
-	arma::cx_double dipole; double exponent;
-	double factor_conversion=1/(number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*volume_cell);
-	////\int dr w_1\sigma(r-R)e^{i(q+G)r}W_1\sigma(r)
-	////it is necessary to translate the wannier function
-	/// the strategy is to traslate it and putting to zero all elements outside the wannier supercell
-	///wannier3=function_translate(wannier1,i1,j1,k1);
-	////this is the integral over the wannier supercell
-	int imax1=number_primitive_cells_integration(0);
-	int jmax1=number_primitive_cells_integration(1);
-	int kmax1=number_primitive_cells_integration(2);
-
-	int count;
-	///#pragma omp parallel for collapse(4) private(dipole,exponent) shared(A_matrix)
-	for(int i1=0;i1<imax1;i1++)
-		for(int j1=0;j1<jmax1;j1++)
-			for(int k1=0;k1<kmax1;k1++)
-				for(int spin=0;spin<(spinorial_calculation+1);spin++){
-					dipole.real(0.0); dipole.imag(0.0);
-					for(int i2=0;i2<number_unit_cells_supercell(0);i2++)
-						for(int j2=0;j2<number_unit_cells_supercell(1);j2++)
-							for(int k2=0;k2<number_unit_cells_supercell(2);k2++)
-								if(indexingi(i1,i2)>=0&&indexingj(j1,j2)>=0&&indexingk(k1,k2)>=0)
-								{
-									for(int s2=0;s2<number_points_real_space_grid_percell(0);s2++)
-										for(int t2=0;t2<number_points_real_space_grid_percell(1);t2++)
-											for(int l2=0;l2<number_points_real_space_grid_percell(2);l2++){
-												exponent=0;
-												for(int r=0;r<3;r++)
-													exponent+=(g_momentum(r)+excitonic_momentum(r))*(origin(r)+(i2+s2/number_points_real_space_grid_percell(0))*supercell_axis(r,0)+(j2+t2/number_points_real_space_grid_percell(1))*supercell_axis(r,1)+(k2+l2/number_points_real_space_grid_percell(2))*supercell_axis(r,2));
-												dipole.real(dipole.real()+cos(exponent)*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_1*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingi(i1,i2)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingj(j1,j2)*number_unit_cells_supercell(2)+indexingk(k1,k2)))*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_2*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i2*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j2*number_unit_cells_supercell(2)+k2)));			
-												dipole.imag(dipole.imag()+sin(exponent)*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_1*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingi(i1,i2)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingj(j1,j2)*number_unit_cells_supercell(2)+indexingk(k1,k2)))*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_2*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i2*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j2*number_unit_cells_supercell(2)+k2)));			
-											}
-								}
-					A_matrix(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)=factor_conversion*dipole/double(number_points_real_space_grid_total);
-				}	
-	return A_matrix;
-};
-
-arma::field<arma::cx_mat> Dipole_Elements::function_building_M_k1k2_ij(arma::vec excitonic_momentum,int diagonal_k){
-	cout<<"starting M"<<endl;
-
-	arma::cx_vec A_matrix1((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
-	///	arma::cx_mat A_matrix2((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),number_k_points_list*number_k_points_list*number_g_points_list*number_wannier_centers*number_wannier_centers);
-	arma::cx_double composition;
-	arma::cx_double temporary;
-	double exponent;
-	
+arma::field<arma::cx_mat> Dipole_Elements::function_building_exponential_factor(arma::vec excitonic_momentum,int diagonal_k,int minus){
 	if(diagonal_k==1){
+		arma::vec excitonic_momentum_tmp=excitonic_momentum/arma::vecnorm(excitonic_momentum);
 		arma::field<arma::cx_mat> M_matrix(number_g_points_list);
+		int basis=(spinorial_calculation+1)*number_wannier_centers;
 		for(int i=0;i<number_g_points_list;i++)
-				M_matrix(i).set_size((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
-		
-		#pragma omp parallel for collapse(3) private(A_matrix1,composition,exponent,temporary) shared(M_matrix)
-		for(int w1=0;w1<number_wannier_centers;w1++)
-			for(int w2=0;w2<number_wannier_centers;w2++)
-				for(int i=0;i<number_g_points_list;i++){
-					A_matrix1=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum,g_points_list.col(i));
-					for(int spin=0;spin<(spinorial_calculation+1);spin++){
-						composition.real(0.0); composition.imag(0.0);
-						for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
-							for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
-								for(int k1=0;k1<number_primitive_cells_integration(2);k1++){
-									exponent=0;
-									for(int r=0;r<3;r++)
-										exponent+=((excitonic_momentum(r))*((l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice(r,0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice(r,1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice(r,2)));
-										//exponent=arma::accu((excitonic_momentum.t())*((l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
-									temporary=A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1);
-									composition.real(composition.real()+cos(exponent)*real(temporary)-sin(exponent)*imag(temporary));
-									composition.imag(composition.imag()-sin(exponent)*real(temporary)+cos(exponent)*imag(temporary));
-								}
-						M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2)=composition;
-						////(number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
-					}
-			}
-		#pragma omp parallel for collapse(4) 
-		for(int w1=0;w1<number_wannier_centers;w1++)
-			for(int w2=w1;w2<number_wannier_centers;w2++)
-				for(int i=0;i<number_g_points_list;i++)
-					for(int spin=0;spin<(spinorial_calculation+1);spin++)
-						M_matrix(i)(spin*number_wannier_centers+w2,spin*number_wannier_centers+w1)=conj(M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2));
-		cout<<"finishing M"<<endl;
-		return M_matrix;
+			M_matrix(i).zeros(basis,basis);
 
+		double temporary_variable; arma::vec wannier_center(3);
+		for(int spin_channel=0;spin_channel<(spinorial_calculation+1);spin_channel++)
+			for(int g=0; g<number_g_points_list; g++)
+				for(int i=0; i<number_wannier_centers; i++){
+					temporary_variable=0.0;
+					wannier_center=(wannier_centers(spin_channel)).col(i);
+					for(int r=0; r<3; r++)
+						temporary_variable+=(wannier_center(r)*((1-minus*2)*(g_points_list(r,g)+excitonic_momentum_tmp(r))));
+					///M_matrix(g)(spin_channel*number_wannier_centers+i,spin_channel*number_wannier_centers+i).real(std::cos(temporary_variable));
+					M_matrix(g)(spin_channel*number_wannier_centers+i,spin_channel*number_wannier_centers+i).imag(std::sin(temporary_variable));
+				}
+		return M_matrix;
 	}else{
 		arma::field<arma::cx_mat> M_matrix(number_g_points_list*number_k_points_list*number_k_points_list);
 		for(int i=0;i<number_g_points_list;i++)
 			for(int k1=0;k1<number_k_points_list;k1++)
 				for(int k2=0;k2<number_k_points_list;k2++)
-					M_matrix(i*number_k_points_list*number_k_points_list+k1*number_k_points_list+k2).set_size((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
-		double norm=arma::vecnorm(excitonic_momentum);
-		if((norm==0)&&(number_g_points_list==1)){
-			cout<<"faster approach"<<endl;
-			#pragma omp parallel for collapse(5) private(A_matrix1,composition,exponent,temporary) shared(M_matrix)
-			for(int i=0;i<number_g_points_list;i++)	
-				for(int w1=0;w1<number_wannier_centers;w1++)
-					for(int w2=w1;w2<number_wannier_centers;w2++)	
-						for(int k1=0;k1<number_k_points_list;k1++)
-							for(int k2=k1;k2<number_k_points_list;k2++){
-								///cout<<w1<<" "<<w2<<" "<<k1<<" "<<k2<<endl;
-								//A_matrix2.col(k1*number_k_points_list*number_g_points_list*number_wannier_centers*number_wannier_centers+k2*number_g_points_list*number_wannier_centers*number_wannier_centers+i*number_wannier_centers*number_wannier_centers+w1*number_wannier_centers+w2)=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum+k_points_list.col(k1)-k_points_list.col(k2),g_points_list.col(i));
-								A_matrix1=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum+k_points_list.col(k1)-k_points_list.col(k2),g_points_list.col(i));		
-								composition.real(0.0); 
-								composition.imag(0.0);
-								for(int spin=0;spin<(spinorial_calculation+1);spin++){
-									for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
-										for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
-											for(int k1=0;k1<number_primitive_cells_integration(2);k1++){
-												exponent=arma::accu(((excitonic_momentum+k_points_list.col(k1)-k_points_list.col(k2)).t())*(l1*bravais_lattice.col(0)+j1*bravais_lattice.col(1)+k1*bravais_lattice.col(2)));
-												temporary=A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1);
-												composition.real(composition.real()+cos(exponent)*real(temporary)-sin(exponent)*imag(temporary));
-												composition.imag(composition.imag()-sin(exponent)*real(temporary)+cos(exponent)*imag(temporary));
-											}
-									M_matrix(i*number_k_points_list+k1*number_k_points_list+k2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2)=composition/(number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
-								}
-							}
-				
-			#pragma omp parallel for collapse(6) shared(M_matrix)			
-			for(int i=0;i<number_g_points_list;i++)	
-				for(int w1=0;w1<number_wannier_centers-1;w1++)
-					for(int w2=w1+1;w2<number_wannier_centers;w2++)	
-						for(int k1=0;k1<number_k_points_list-1;k1++)
-							for(int k2=k1+1;k2<number_k_points_list;k2++)
-								for(int spin=0;spin<(spinorial_calculation+1);spin++)
-									M_matrix(i*number_k_points_list+k2*number_k_points_list+k1)(spin*number_wannier_centers+w2,spin*number_wannier_centers+w1)=conj(M_matrix(i*number_k_points_list+k1*number_k_points_list+k2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2));
-		}else{
-			#pragma omp parallel for collapse(5) private(A_matrix1,composition,exponent,temporary) shared(M_matrix)
-			for(int i=0;i<number_g_points_list;i++)	
-				for(int w1=0;w1<number_wannier_centers;w1++)
-					for(int w2=0;w2<number_wannier_centers;w2++)	
-						for(int k1=0;k1<number_k_points_list;k1++)
-							for(int k2=0;k2<number_k_points_list;k2++){
-								///cout<<w1<<" "<<w2<<" "<<k1<<" "<<k2<<endl;
-								//A_matrix2.col(k1*number_k_points_list*number_g_points_list*number_wannier_centers*number_wannier_centers+k2*number_g_points_list*number_wannier_centers*number_wannier_centers+i*number_wannier_centers*number_wannier_centers+w1*number_wannier_centers+w2)=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum+k_points_list.col(k1)-k_points_list.col(k2),g_points_list.col(i));
-								A_matrix1=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum+k_points_list.col(k1)-k_points_list.col(k2),g_points_list.col(i));		
-								composition.real(0.0); 
-								composition.imag(0.0);
-								for(int spin=0;spin<(spinorial_calculation+1);spin++){
-									for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
-										for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
-											for(int k1=0;k1<number_primitive_cells_integration(2);k1++){
-												exponent=arma::accu(((excitonic_momentum+k_points_list.col(k1)-k_points_list.col(k2)).t())*(l1*bravais_lattice.col(0)+j1*bravais_lattice.col(1)+k1*bravais_lattice.col(2)));
-												temporary=A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1);
-												composition.real(composition.real()+cos(exponent)*real(temporary)-sin(exponent)*imag(temporary));
-												composition.imag(composition.imag()-sin(exponent)*real(temporary)+cos(exponent)*imag(temporary));
-											}
-									M_matrix(i*number_k_points_list+k1*number_k_points_list+k2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2)=composition/(number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
-								}
-							}
-		}
-		cout<<"finishing M"<<endl;
-		return M_matrix;
+					M_matrix(i*number_k_points_list*number_k_points_list+k1*number_k_points_list+k2).zeros((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
+		double temporary_variable; arma::vec wannier_center(3);
+		for(int spin_channel=0;spin_channel<(spinorial_calculation+1);spin_channel++)
+			for(int g=0; g<number_g_points_list; g++)
+				for(int k=0; k<number_k_points_list; k++)
+					for(int l=0; l<number_k_points_list; l++)
+						for(int i=0; i<number_wannier_centers; i++){
+							temporary_variable=0.0;
+							wannier_center=(wannier_centers(spin_channel)).col(i);
+							for(int r=0; r<3; r++)
+								temporary_variable+=(wannier_center(r)*((1-minus*2)*(g_points_list(r,g)+excitonic_momentum(r)+k_points_list(r,k)-k_points_list(r,l))));
+							M_matrix(g*number_k_points_list*number_k_points_list+k*number_k_points_list+l)(spin_channel*number_wannier_centers+i,spin_channel*number_wannier_centers+i).real(std::cos(temporary_variable));
+							M_matrix(g*number_k_points_list*number_k_points_list+k*number_k_points_list+l)(spin_channel*number_wannier_centers+i,spin_channel*number_wannier_centers+i).imag(std::sin(temporary_variable));
+						}
+		return M_matrix;	
+
 	}
 };
 
+arma::cx_vec Dipole_Elements::function_building_real_space_wannier_dipole_ij(int number_wannier_1,int number_wannier_2,arma::vec excitonic_momentum,arma::vec g_momentum){
+	arma::cx_vec A_matrix((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+	double exponent;
+	double factor=number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*volume_cell/double(number_points_real_space_grid_total);
+	////(number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*volume_cell);
+	////\int dr w_1\sigma(r-R)e^{i(q+G)r}W_1\sigma(r)
+	////it is necessary to translate the wannier function
+	/// the strategy is to traslate it and putting to zero all elements outside the wannier supercell
+	///wannier3=function_translate(wannier1,i1,j1,k1);
+	////this is the integral over the wannier supercell
+	#pragma omp parallel for collapse(7) private(exponent) shared(A_matrix)
+	for(int i1=0;i1<int(number_primitive_cells_integration(0));i1++)
+		for(int j1=0;j1<int(number_primitive_cells_integration(1));j1++)
+			for(int k1=0;k1<int(number_primitive_cells_integration(2));k1++)
+				for(int spin=0;spin<(spinorial_calculation+1);spin++)
+					for(int k2=0;k2<int(number_unit_cells_supercell(2));k2++)
+						for(int j2=0;j2<int(number_unit_cells_supercell(1));j2++)
+							for(int i2=0;i2<int(number_unit_cells_supercell(0));i2++)
+								if(indexingi(i1,i2)>=0&&indexingj(j1,j2)>=0&&indexingk(k1,k2)>=0)
+								{
+									for(int l2=0;l2<number_points_real_space_grid_percell(2);l2++)
+										for(int t2=0;t2<number_points_real_space_grid_percell(1);t2++)
+											for(int s2=0;s2<number_points_real_space_grid_percell(0);s2++)
+												{
+													exponent=arma::accu((g_momentum+excitonic_momentum)%(origin+(i2+s2/number_points_real_space_grid_percell(0))*supercell_axis.col(0)+(j2+t2/number_points_real_space_grid_percell(1))*supercell_axis.col(1)+(k2+l2/number_points_real_space_grid_percell(2))*supercell_axis.col(2)));
+													A_matrix(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1).real(std::real(A_matrix(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))+factor*std::cos(exponent)*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_1*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingi(i1,i2)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingj(j1,j2)*number_unit_cells_supercell(2)+indexingk(k1,k2)))*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_2*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i2*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j2*number_unit_cells_supercell(2)+k2)));
+													A_matrix(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1).imag(std::imag(A_matrix(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))+factor*std::sin(exponent)*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_1*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingi(i1,i2)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingj(j1,j2)*number_unit_cells_supercell(2)+indexingk(k1,k2)))*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_2*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i2*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j2*number_unit_cells_supercell(2)+k2)));
+												}
+								}
+	return A_matrix;
+};
+
+std::tuple<arma::cx_mat,arma::cx_vec> Dipole_Elements::function_building_real_space_wannier_dipole_ij_small_q(int number_wannier_1,int number_wannier_2,arma::vec g_momentum){
+	arma::cx_mat A_matrix((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),3,arma::fill::zeros);
+	arma::cx_vec A_vector((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+
+	double factor=number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*volume_cell/double(number_points_real_space_grid_total);
+	double exponent;
+	////(number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*volume_cell);
+	///(number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)*volume_cell);
+	////\int dr w_1\sigma(r-R)e^{i(q+G)r}W_1\sigma(r)
+	////it is necessary to translate the wannier function
+	/// the strategy is to traslate it and putting to zero all elements outside the wannier supercell
+	///wannier3=function_translate(wannier1,i1,j1,k1);
+	////this is the integral over the wannier supercell;
+
+	#pragma omp parallel for collapse(8) private(exponent) shared(A_matrix,A_vector)
+	for(int i1=0;i1<int(number_primitive_cells_integration(0));i1++)
+		for(int j1=0;j1<int(number_primitive_cells_integration(1));j1++)
+			for(int k1=0;k1<int(number_primitive_cells_integration(2));k1++)
+				for(int spin=0;spin<(spinorial_calculation+1);spin++)
+					for(int r=0;r<3;r++)
+						for(int i2=0;i2<int(number_unit_cells_supercell(0));i2++)
+							for(int j2=0;j2<int(number_unit_cells_supercell(1));j2++)
+								for(int k2=0;k2<int(number_unit_cells_supercell(2));k2++)
+									if(indexingi(i1,i2)>=0&&indexingj(j1,j2)>=0&&indexingk(k1,k2)>=0)
+									{
+										for(int s2=0;s2<int(number_points_real_space_grid_percell(0));s2++)
+											for(int t2=0;t2<int(number_points_real_space_grid_percell(1));t2++)
+												for(int l2=0;l2<int(number_points_real_space_grid_percell(2));l2++){
+													exponent=(origin(r)+(i2+s2/number_points_real_space_grid_percell(0))*supercell_axis(r,0)+(j2+t2/number_points_real_space_grid_percell(1))*supercell_axis(r,1)+(k2+l2/number_points_real_space_grid_percell(2))*supercell_axis(r,2));
+													A_matrix(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1,r).imag(std::imag(A_matrix(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1,r))+factor*(exponent)*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_1*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingi(i1,i2)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingj(j1,j2)*number_unit_cells_supercell(2)+indexingk(k1,k2)))*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_2*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i2*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j2*number_unit_cells_supercell(2)+k2)));			
+													if(r==0)
+														A_vector(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1).real(std::real(A_vector(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+i1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))+factor*std::real(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_1*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingi(i1,i2)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+indexingj(j1,j2)*number_unit_cells_supercell(2)+indexingk(k1,k2)))*(real_space_wannier_functions_list(s2*number_points_real_space_grid_percell(1)*number_points_real_space_grid_percell(2)+t2*number_points_real_space_grid_percell(2)+l2,spin*number_wannier_centers*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+number_wannier_2*number_unit_cells_supercell(0)*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+i2*number_unit_cells_supercell(1)*number_unit_cells_supercell(2)+j2*number_unit_cells_supercell(2)+k2)));		
+												}
+									}
+	return {A_matrix,A_vector};
+};
+
+arma::field<arma::cx_mat> Dipole_Elements::function_building_M_k1k2_ij(arma::vec excitonic_momentum,int diagonal_k, int small_excitonic_momentum,int radius_convergence){
+	cout<<"starting M"<<endl;
+	double additional_factor=1;////number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2);
+	///1/(number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
+	////if(small_excitonic_momentum==0){
+	///	arma::cx_mat A_matrix2((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),number_k_points_list*number_k_points_list*number_g_points_list*number_wannier_centers*number_wannier_centers);
+	///arma::cx_double composition;
+	arma::cx_double temporary;
+	double exponent;
+	if(diagonal_k==1){
+		if(small_excitonic_momentum==0){
+			arma::cx_vec A_matrix1((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+			arma::cx_vec A_matrix2((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+			arma::field<arma::cx_mat> M_matrix(number_g_points_list);
+			for(int i=0;i<number_g_points_list;i++)
+				M_matrix(i).zeros((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
+			
+			///#pragma omp parallel for collapse(3) private(A_matrix1,composition,exponent) shared(M_matrix)
+			for(int w1=0;w1<number_wannier_centers;w1++)
+				for(int w2=0;w2<number_wannier_centers;w2++)
+					for(int i=0;i<number_g_points_list;i++){
+						A_matrix1=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum,g_points_list.col(i));
+						///A_matrix2=function_building_real_space_wannier_dipole_ij(w2,w1,excitonic_momentum,g_points_list.col(i));
+						///cout<<"TEST SYMMETRY  "<<w1<<" "<<w2<<A_matrix1<<" "<<A_matrix2<<" "<<endl;
+						for(int spin=0;spin<(spinorial_calculation+1);spin++)
+							for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
+								for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
+									for(int k1=0;k1<number_primitive_cells_integration(2);k1++)
+									{
+										exponent=arma::accu((excitonic_momentum)%(origin_unitcell+(l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+										///cout<<"exponent "<<exponent<<" ";
+											//exponent=arma::accu((excitonic_momentum.t())*((l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+										M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).real(std::real(M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*std::cos(exponent)*std::real(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))-additional_factor*std::sin(exponent)*std::imag(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+										M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).imag(std::imag(M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*std::sin(exponent)*std::real(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))+additional_factor*std::cos(exponent)*std::imag(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+										///cout<<"composition "<<composition<<" ";
+									}
+					}
+
+			///cout<<"TEST SYMMETRY "<<M_matrix(0)-M_matrix(0).t()<<endl;	
+			cout<<"finishing M"<<endl;
+			return M_matrix;
+		}else{
+			arma::vec excitonic_momentum_tmp=excitonic_momentum/arma::vecnorm(excitonic_momentum);
+			arma::cx_vec A_matrix2((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+			arma::cx_vec zeros((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+			arma::field<arma::cx_mat> M_matrix(number_g_points_list);
+			for(int i=0;i<number_g_points_list;i++)
+					M_matrix(i).zeros((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
+			///#pragma omp parallel for collapse(3) private(A_matrix2,composition,exponent,temporary) shared(M_matrix)
+			for(int w1=0;w1<number_wannier_centers;w1++)
+				for(int w2=0;w2<number_wannier_centers;w2++)
+					for(int i=0;i<number_g_points_list;i++){
+						std::tuple<arma::cx_mat,arma::cx_vec> temporary_vector=function_building_real_space_wannier_dipole_ij_small_q(w1,w2,g_points_list.col(i));
+						A_matrix2=zeros;
+						for(int s=0;s<(spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2);s++){
+							for(int r=0;r<3;r++){
+								A_matrix2(s).imag(imag(A_matrix2(s))+imag(get<0>(temporary_vector)(s,r))*excitonic_momentum_tmp(r));
+								///A_matrix2(s).real(real(A_matrix2(s))+real(get<0>(temporary_vector)(s,r))*excitonic_momentum(r));
+							}
+							///A_matrix2(s).imag(imag(A_matrix2(s))+imag(get<1>(temporary_vector)(s)));
+							///A_matrix2(s).real(real(A_matrix2(s))+real(get<1>(temporary_vector)(s)));
+						}
+						for(int spin=0;spin<(spinorial_calculation+1);spin++)
+							for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
+								for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
+									for(int k1=0;k1<number_primitive_cells_integration(2);k1++)
+									{
+										for(int r=0;r<3;r++)
+											exponent=arma::accu((excitonic_momentum)%(origin_unitcell+(l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+										M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).real(std::real(M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*std::cos(exponent)*real(A_matrix2(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))-additional_factor*std::sin(exponent)*imag(A_matrix2(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+										M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).imag(std::imag(M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*std::sin(exponent)*real(A_matrix2(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))+additional_factor*std::cos(exponent)*imag(A_matrix2(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+									}
+							///(double(number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)));
+						get<0>(temporary_vector).clear();
+						get<1>(temporary_vector).clear();
+					}
+			cout<<"finishing M"<<endl;
+			return M_matrix;
+		}
+	}else{
+		if(radius_convergence==0){
+			arma::cx_vec A_matrix1((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+			arma::field<arma::cx_mat> M_matrix(number_g_points_list*number_k_points_list*number_k_points_list);
+			for(int i=0;i<number_g_points_list;i++)
+				for(int k1=0;k1<number_k_points_list;k1++)
+					for(int k2=0;k2<number_k_points_list;k2++)
+						M_matrix(i*number_k_points_list*number_k_points_list+k1*number_k_points_list+k2).zeros((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
+			///#pragma omp parallel for collapse(5) private(A_matrix1,composition,exponent) shared(M_matrix)
+			for(int i=0;i<number_g_points_list;i++)	
+				for(int w1=0;w1<number_wannier_centers;w1++)
+					for(int w2=0;w2<number_wannier_centers;w2++)	
+						for(int s1=0;s1<number_k_points_list;s1++)
+							for(int s2=0;s2<number_k_points_list;s2++){
+								cout<<w1<<" "<<w2<<" "<<s1<<" "<<s2<<endl;
+								//A_matrix2.col(k1*number_k_points_list*number_g_points_list*number_wannier_centers*number_wannier_centers+k2*number_g_points_list*number_wannier_centers*number_wannier_centers+i*number_wannier_centers*number_wannier_centers+w1*number_wannier_centers+w2)=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum+k_points_list.col(k1)-k_points_list.col(k2),g_points_list.col(i));
+								A_matrix1=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2),g_points_list.col(i));		
+								for(int spin=0;spin<(spinorial_calculation+1);spin++)
+									for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
+										for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
+											for(int k1=0;k1<number_primitive_cells_integration(2);k1++)
+											{
+												exponent=arma::accu(((excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2)))%(origin_unitcell+(l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+												M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).real(std::real(M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*cos(exponent)*real(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))-additional_factor*sin(exponent)*imag(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+												M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).imag(std::imag(M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*sin(exponent)*real(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))+additional_factor*cos(exponent)*imag(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+											}
+							}
+			cout<<"finishing M"<<endl;
+			return M_matrix;
+		}else{
+			arma::cx_vec A_matrix1((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+			arma::field<arma::cx_mat> M_matrix(number_g_points_list*number_k_points_list*number_k_points_list);
+			for(int i=0;i<number_g_points_list;i++)
+				for(int k1=0;k1<number_k_points_list;k1++)
+					for(int k2=0;k2<number_k_points_list;k2++)
+						M_matrix(i*number_k_points_list*number_k_points_list+k1*number_k_points_list+k2).zeros((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
+			///#pragma omp parallel for collapse(5) private(A_matrix1,composition,exponent) shared(M_matrix)
+			///the same point is already considered
+			int count_number_points;
+			count_number_points=0;
+			for(int s1=0;s1<number_k_points_list;s1++)
+				for(int s2=0;s2<number_k_points_list;s2++)
+					if((arma::vecnorm(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2))<=radius_building_kernel)&&(s1!=s2))
+						count_number_points+=1;
+			
+			cout<<"NUMBER K POINT DIFFERENCES CONSIDERED "<<count_number_points+1<<endl;
+			///saving minima differences
+			///saving their modulus
+			arma::mat k_point_differences_minima(3,count_number_points);
+			arma::vec k_point_differences_minima_modulus(count_number_points);
+			////ordering elements
+			count_number_points=0;
+			for(int s1=0;s1<number_k_points_list;s1++)
+				for(int s2=0;s2<number_k_points_list;s2++)
+					if((arma::vecnorm(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2))<=radius_building_kernel)&&(s1!=s2)){
+						k_point_differences_minima.col(count_number_points)=k_points_list.col(s1)-k_points_list.col(s2);
+						k_point_differences_minima_modulus(count_number_points)=(arma::sign(s2-s1))*arma::vecnorm(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2));
+						count_number_points+=1;
+					}
+			///cout<<count_number_points+1<<endl;
+			///cout<<k_point_differences_minima_modulus<<endl;
+			arma::uvec sorting=sort_index(k_point_differences_minima_modulus);
+			arma::mat k_point_differences_minima_ordered(3,count_number_points+1);
+			///cout<<sorting<<endl;
+			///cout<<k_point_differences_minima_modulus<<endl;
+			///cout<<k_point_differences_minima<<endl;
+			arma::vec zeros(3,arma::fill::zeros);
+			k_point_differences_minima_ordered.col(0)=zeros;
+			for(int count=0;count<count_number_points;count++){
+				k_point_differences_minima_ordered.col(count+1)=k_point_differences_minima.col(sorting(count));
+				///cout<<k_point_differences_minima_modulus(sorting(count))<<endl;
+			}
+			count_number_points+=1;
+			
+			///TEST THRESHOLDING....
+			//k_point_differences_minima_modulus=arma::sort(k_point_differences_minima_modulus);
+			/////eliminating elements too nearby threshold radius
+			//int degenerate_elements;
+			//int count1=0;
+			//while(count1<count_number_points-1){
+			//	degenerate_elements=0;
+			//	for(int count2=count1+1;count2<count_number_points; count2++){
+			//		if(k_point_differences_minima_modulus(count2)-k_point_differences_minima_modulus(count1)<threshold_building_kernel)
+			//			degenerate_elements+=1;
+			//		else{
+			//			count1+=degenerate_elements;
+			//			break;
+			//		}
+			//	}
+			//}
+			//int total_number_elements=count1;
+			//cout<<"NUMBER K POINT DIFFERENCES CONSIDERED after THRESHOLD"<<total_number_elements<<endl;
+			//arma::vec k_point_differences_minima_modulus_after_degeneracy(total_number_elements);
+			//count1=0;
+			//int count3=0;
+			//while(count1<total_number_elements){
+			//	degenerate_elements=0;
+			//	for(int count2=count1+1;count2<count_number_points; count2++){
+			//		if(k_point_differences_minima_modulus(count2)-k_point_differences_minima_modulus(count1)<threshold_building_kernel)
+			//			degenerate_elements+=1;
+			//		else{
+			//			k_point_differences_minima_modulus_after_degeneracy(count3)=k_point_differences_minima_modulus(count1);
+			//			count3+=1;
+			//			count1+=degenerate_elements;
+			//			break;
+			//		}
+			//	}
+			//}
+			//arma::mat k_point_differences_minima_after_degeneracy(3,total_number_elements);
+			//for(int count=0;count<count_number_points;count++)
+
+			///associating to each pair an element of the list of minima, if the pair is sufficiently nearby (SCALAR PRODUCT)
+			double maximize_projection=0.0;
+			int index_maximize_projeciton=0;
+			arma::vec pair_association(number_k_points_list*number_k_points_list);
+			for(int s1=0;s1<number_k_points_list;s1++)
+				for(int s2=0;s2<number_k_points_list;s2++){
+					if(s1==s2)
+						pair_association(s1*number_k_points_list+s2)=0;
+					else if(arma::vecnorm(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2))>radius_building_kernel)
+						pair_association(s1*number_k_points_list+s2)=-1;
+					else{
+						///it is not sufficient to look at the radius but also at the projection
+						for(int count=1;count<count_number_points-1;count++)
+							if(s2>s1)
+								if(arma::vecnorm(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2))<arma::vecnorm(k_point_differences_minima_ordered.col(count+1))){
+									maximize_projection=0;
+									index_maximize_projeciton=0;
+									for(int count2=0;count2<count+1;count2++)
+										if(arma::dot(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2),k_point_differences_minima_ordered.col(count2))>maximize_projection)
+											index_maximize_projeciton=count2;
+									pair_association(s1*number_k_points_list+s2)=index_maximize_projeciton;	
+								}
+							else
+								if(arma::vecnorm(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2))>arma::vecnorm(k_point_differences_minima_ordered.col(count+1))){
+									maximize_projection=0;
+									index_maximize_projeciton=0;
+									for(int count2=0;count2<count+1;count2++)
+										if(arma::dot(excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2),k_point_differences_minima_ordered.col(count2))>maximize_projection)
+											index_maximize_projeciton=count2;
+									pair_association(s1*number_k_points_list+s2)=index_maximize_projeciton;	
+								}
+					}
+				}
+			////at this point is sufficient to calculate dipoles between the k_point_differences_minima and then associate the pairs to them
+			arma::cx_mat A_matrix0((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),count_number_points);
+			for(int i=0;i<number_g_points_list;i++)	
+				for(int w1=0;w1<number_wannier_centers;w1++)
+					for(int w2=0;w2<number_wannier_centers;w2++){
+						for(int count=0;count<count_number_points;count++)
+							A_matrix0.col(count)=function_building_real_space_wannier_dipole_ij(w1,w2,k_point_differences_minima_ordered.col(count),g_points_list.col(i));		
+						for(int s1=0;s1<number_k_points_list;s1++)
+							for(int s2=0;s2<number_k_points_list;s2++)
+								if(pair_association(s1*number_k_points_list+s2)<0){
+									for(int spin=0;spin<(spinorial_calculation+1);spin++){
+										M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).real(0.0);			
+										M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).imag(0.0);
+									}
+								}else{
+									A_matrix1=A_matrix0.col(pair_association(s1*number_k_points_list+s2));
+									for(int spin=0;spin<(spinorial_calculation+1);spin++)
+										for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
+											for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
+												for(int k1=0;k1<number_primitive_cells_integration(2);k1++)
+												{
+													exponent=arma::accu(((excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2)))%(origin_unitcell+(l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+													M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).real(std::real(M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*cos(exponent)*real(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))-additional_factor*sin(exponent)*imag(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+													M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2).imag(std::imag(M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2))+additional_factor*sin(exponent)*real(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1))+additional_factor*cos(exponent)*imag(A_matrix1(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1)));
+												}
+								}
+					}
+			cout<<"finishing M"<<endl;
+			return M_matrix;
+		}
+	}
+	///}
+	//else{
+	//	///arma::cx_mat A_matrix1((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),3);
+	//	///arma::cx_vec A_vector((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
+	//	arma::cx_vec A_matrix2((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2));
+	//	arma::cx_vec zeros((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),arma::fill::zeros);
+	//	///	arma::cx_mat A_matrix2((spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2),number_k_points_list*number_k_points_list*number_g_points_list*number_wannier_centers*number_wannier_centers);
+	//	arma::cx_double composition;
+	//	arma::cx_double temporary;
+	//	double exponent;
+	//	if(diagonal_k==1){
+	//		arma::field<arma::cx_mat> M_matrix(number_g_points_list);
+	//		for(int i=0;i<number_g_points_list;i++)
+	//				M_matrix(i).set_size((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
+	//
+	//		#pragma omp parallel for collapse(3) private(A_matrix2,composition,exponent,temporary) shared(M_matrix)
+	//		for(int w1=0;w1<number_wannier_centers;w1++)
+	//			for(int w2=0;w2<number_wannier_centers;w2++)
+	//				for(int i=0;i<number_g_points_list;i++){
+	//					std::tuple<arma::cx_mat,arma::cx_vec> temporary_vector=function_building_real_space_wannier_dipole_ij_small_q(w1,w2,g_points_list.col(i));
+	//					A_matrix2=zeros;
+	//					for(int s=0;s<(spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2);s++){
+	//						for(int r=0;r<3;r++){
+	//							A_matrix2(s).imag(imag(A_matrix2(s))+imag(get<0>(temporary_vector)(s,r))*excitonic_momentum(r));
+	//							A_matrix2(s).real(real(A_matrix2(s))+real(get<0>(temporary_vector)(s,r))*excitonic_momentum(r));
+	//						}
+	//						A_matrix2(s).imag(imag(A_matrix2(s))+imag(get<1>(temporary_vector)(s)));
+	//						A_matrix2(s).real(real(A_matrix2(s))+real(get<1>(temporary_vector)(s)));
+	//					}
+	//					for(int spin=0;spin<(spinorial_calculation+1);spin++){
+	//						composition.real(0.0); composition.imag(0.0);
+	//						for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
+	//							for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
+	//								for(int k1=0;k1<number_primitive_cells_integration(2);k1++){
+	//									exponent=0;
+	//									for(int r=0;r<3;r++)
+	//										exponent=arma::accu((excitonic_momentum.t())*((l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+	//									temporary=A_matrix2(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1);
+	//									composition.real(composition.real()+cos(exponent)*real(temporary)-sin(exponent)*imag(temporary));
+	//									composition.imag(composition.imag()+sin(exponent)*real(temporary)+cos(exponent)*imag(temporary));
+	//								}
+	//						M_matrix(i)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2)=additional_factor*composition;
+	//						///(double(number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)));
+	//					}
+	//					get<0>(temporary_vector).clear();
+	//					get<1>(temporary_vector).clear();
+	//				}
+	//		cout<<"finishing M"<<endl;
+	//		return M_matrix;
+	//	}else{
+	//		arma::field<arma::cx_mat> M_matrix(number_g_points_list*number_k_points_list*number_k_points_list);
+	//		for(int i=0;i<number_g_points_list;i++)
+	//			for(int k1=0;k1<number_k_points_list;k1++)
+	//				for(int k2=0;k2<number_k_points_list;k2++)
+	//					M_matrix(i*number_k_points_list*number_k_points_list+k1*number_k_points_list+k2).set_size((spinorial_calculation+1)*number_wannier_centers,(spinorial_calculation+1)*number_wannier_centers);
+	//		#pragma omp parallel for collapse(3) private(A_matrix2,composition,exponent,temporary) shared(M_matrix)
+	//		for(int i=0;i<number_g_points_list;i++)	
+	//			for(int w1=0;w1<number_wannier_centers;w1++)
+	//				for(int w2=0;w2<number_wannier_centers;w2++){
+	//					std::tuple<arma::cx_mat,arma::cx_vec>  temporary_vector=function_building_real_space_wannier_dipole_ij_small_q(w1,w2,g_points_list.col(i));
+	//					for(int s1=0;s1<number_k_points_list;s1++)
+	//						for(int s2=0;s2<number_k_points_list;s2++){
+	//							composition.real(0.0); 
+	//							composition.imag(0.0);
+	//							A_matrix2=zeros;
+	//							for(int s=0;s<(spinorial_calculation+1)*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2);s++){
+	//								for(int r=0;r<3;r++){
+	//									A_matrix2(s).imag(imag(A_matrix2(s))+imag(get<0>(temporary_vector)(s,r))*(excitonic_momentum(r)+k_points_list(r,s1)-k_points_list(r,s2)));
+	//									A_matrix2(s).real(real(A_matrix2(s))+real(get<0>(temporary_vector)(s,r))*(excitonic_momentum(r)+k_points_list(r,s1)-k_points_list(r,s2)));
+	//								}	
+	//								A_matrix2(s).imag(imag(A_matrix2(s))+imag(get<1>(temporary_vector)(s)));
+	//								A_matrix2(s).real(real(A_matrix2(s))+real(get<1>(temporary_vector)(s)));
+	//							}	
+	//							for(int spin=0;spin<(spinorial_calculation+1);spin++){
+	//								for(int l1=0;l1<number_primitive_cells_integration(0);l1++)
+	//									for(int j1=0;j1<number_primitive_cells_integration(1);j1++)
+	//										for(int k1=0;k1<number_primitive_cells_integration(2);k1++){
+	//											exponent=arma::accu(((excitonic_momentum+k_points_list.col(s1)-k_points_list.col(s2)).t())*((l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+	//											///exponent=arma::accu(((excitonic_momentum).t())*((l1-int(number_primitive_cells_integration(0)/2))*bravais_lattice.col(0)+(j1-int(number_primitive_cells_integration(1)/2))*bravais_lattice.col(1)+(k1-int(number_primitive_cells_integration(2)/2))*bravais_lattice.col(2)));
+	//											temporary=A_matrix2(spin*number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+l1*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)+j1*number_primitive_cells_integration(2)+k1);
+	//											composition.real(composition.real()+cos(exponent)*real(temporary)-sin(exponent)*imag(temporary));
+	//											composition.imag(composition.imag()+sin(exponent)*real(temporary)+cos(exponent)*imag(temporary));
+	//										}
+	//								M_matrix(i*number_k_points_list+s1*number_k_points_list+s2)(spin*number_wannier_centers+w1,spin*number_wannier_centers+w2)=additional_factor*composition;//(double(number_primitive_cells_integration(0)*number_primitive_cells_integration(1)*number_primitive_cells_integration(2)));
+	//							}
+	//						}
+	//				get<0>(temporary_vector).clear();
+	//				get<1>(temporary_vector).clear();
+	//				}
+	//		cout<<"finishing M"<<endl;
+	//		return M_matrix;
+	//	}
+	//}
+};
+
 ///diagonal_k ---> rho_{n1,n2,k1-p,k2-q}(excitonic_momentum,G)-->rho_{n1,n2,k1-p,k1-q}(excitonic_momentum,G)
-std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> Dipole_Elements::pull_values(arma::vec excitonic_momentum,arma::vec parameter_l,arma::vec parameter_r,int diagonal_k,int minus,int left,int right,int reverse, int reverse_kk,double threshold_proximity){
+std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> Dipole_Elements::pull_values(arma::vec excitonic_momentum,arma::vec parameter_l,arma::vec parameter_r,int diagonal_k,int minus,int left,int right,int reverse, int reverse_kk,double threshold_proximity, int small_excitonic_momentum,int radius_convergence){
 	arma::vec zeros_vec(3); int effective_number_k_points_list;
 	///adding exponential term e^{i(k+G)r} to the right states
 	///e_{gl}k_{gm} -> l_{g(l,m)}
@@ -1611,12 +1936,16 @@ std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> Dipole_Elements::pull_values(
 	arma::cx_mat energies_sum((spinorial_calculation+1),number_left_states*number_right_states*number_k_points_list);
 	arma::cx_mat rho((spinorial_calculation+1)*number_left_states*number_right_states*effective_number_k_points_list,number_g_points_list,arma::fill::zeros);
 	
-
+	///double normalizaiton;
 	///this is the method using proximity of the wannier functions, and putting to 1 every dipole elements in the same site
-	///arma::field<arma::mat> A_matrix=function_building_A_matrix(threshold_proximity);
-	///dimension a little bit different
-	arma::field<arma::cx_mat> A_matrix=function_building_M_k1k2_ij(excitonic_momentum,diagonal_k);
-///	cout<<A_matrix<<endl;
+	//arma::field<arma::mat> A_matrix=function_building_A_matrix(threshold_proximity);
+	///dimension a little bit different 
+	arma::field<arma::cx_mat> A_matrix=function_building_M_k1k2_ij(excitonic_momentum,diagonal_k,small_excitonic_momentum,radius_convergence);
+	///A_matrix(0)=A_matrix(0)/arma::trace(A_matrix(0));
+	///NAIVE METHOD!!!!!
+	///arma::field<arma::cx_mat> A_matrix=function_building_exponential_factor(excitonic_momentum,diagonal_k,0);
+	cout<<"M matrix"<<endl;
+	///cout<<A_matrix(0)-A_matrix(0).t()<<endl;
 	///in order to avoid twice the calculations in the case of diagonal_k=0, the two possibilities have been separated
 	////this is the heaviest but also the fastest solution (to use cx_cub for left state instead of cx_mat)
 	if(diagonal_k==1){
@@ -1635,23 +1964,41 @@ std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> Dipole_Elements::pull_values(
 		for(int i=0;i<number_k_points_list;i++){
 			ks_state_l_k_points = hamiltonian_tb->pull_ks_states_subset(k_points_list.col(i)-parameter_l,(1-left)*number_valence_bands,left*number_conduction_bands);
 			ks_state_r_k_points = hamiltonian_tb->pull_ks_states_subset(k_points_list.col(i)-parameter_r,(1-right)*number_valence_bands,right*number_conduction_bands);	
-			ks_state_l=get<1>(ks_state_l_k_points); 
+			ks_state_l=get<1>(ks_state_l_k_points);
 			ks_state_r=get<1>(ks_state_r_k_points);
-			ks_energy_l=get<0>(ks_state_l_k_points); 
+			ks_energy_l=get<0>(ks_state_l_k_points);
 			ks_energy_r=get<0>(ks_state_r_k_points);
+			//if(left==1&&right==0){
+			//	cout<<"testing orthogonality"<<endl;
+			//	for(int l1=0;l1<number_conduction_bands;l1++)
+			//		for(int r1=0;r1<number_valence_bands;r1++){
+			//			cout<<" L TIMES R "<<l1<<" "<<r1<<" "<<arma::accu(conj(ks_state_l.col(l1))%ks_state_r.col(r1))<<endl;
+			//			cout<<" L, R "<<  ks_state_l.col(l1)<< "  "<<ks_state_r.col(r1)<<endl;
+			//		}
+			//
+			//normalizaiton=std::imag(arma::accu(conj(ks_state_l.col(0))%ks_state_r.col(0)));
+			///	for(int s=0;s<spin_htb_basis_dimension;s++)
+			///		if(imag(ks_state_r(s,0))!=0){
+			///			normalizaiton=imag(ks_state_r(s,0));
+			///			break;
+			///	}
+			//}
 			for(int spin_channel=0;spin_channel<(spinorial_calculation+1);spin_channel++){
 				for(int g=0;g<number_g_points_list;g++){
 					for(int m=0;m<number_right_states;m++)
 						for(int r=0;r<spin_htb_basis_dimension;r++){
 							///ks_state_right(spin_channel*spin_htb_basis_dimension+r,m*number_k_points_list+i,g).real(real(exponential_factor(spin_channel*spin_htb_basis_dimension+r,g)*ks_state_r(spin_channel*spin_htb_basis_dimension+r,m)));
 							///ks_state_right(spin_channel*spin_htb_basis_dimension+r,m*number_k_points_list+i,g).imag(imag(exponential_factor(spin_channel*spin_htb_basis_dimension+r,g)*ks_state_r(spin_channel*spin_htb_basis_dimension+r,m)));
-							ks_state_right(spin_channel*spin_htb_basis_dimension+r,m*number_k_points_list+i,g).real(real(ks_state_r(spin_channel*spin_htb_basis_dimension+r,m)));
-							ks_state_right(spin_channel*spin_htb_basis_dimension+r,m*number_k_points_list+i,g).imag(imag(ks_state_r(spin_channel*spin_htb_basis_dimension+r,m)));
+							ks_state_right(spin_channel*spin_htb_basis_dimension+r,m*number_k_points_list+i,g).real(std::real(ks_state_r(spin_channel*spin_htb_basis_dimension+r,m)));
+							ks_state_right(spin_channel*spin_htb_basis_dimension+r,m*number_k_points_list+i,g).imag(std::imag(ks_state_r(spin_channel*spin_htb_basis_dimension+r,m)));///normalizaiton);
 						}
-					for(int n=0;n<number_left_states;n++)	
+					for(int n=0;n<number_left_states;n++){
+						//for(int r=0;r<spin_htb_basis_dimension;r++)
+						//	ks_state_l(spin_channel*spin_htb_basis_dimension+r,n).imag(std::imag(ks_state_l(spin_channel*spin_htb_basis_dimension+r,n))/normalizaiton);
 						ks_state_left.subcube(spin_channel*spin_htb_basis_dimension,n*number_k_points_list+i,g,(spin_channel+1)*spin_htb_basis_dimension-1,n*number_k_points_list+i,g)=
 							ks_state_l.submat(spin_channel*spin_htb_basis_dimension,n,(spin_channel+1)*spin_htb_basis_dimension-1,n);
 					}
+				}
 				for(int n=0;n<number_left_states;n++)
 					for(int m=0;m<number_right_states;m++){
 						energies_diff(spin_channel,n*number_right_states*number_k_points_list+m*number_k_points_list+i).real(ks_energy_l(spin_channel,n)-ks_energy_r(spin_channel,m));
@@ -1659,10 +2006,9 @@ std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> Dipole_Elements::pull_values(
 					}
 			}
 		}
-		//cout<<ks_state_left<<endl;
-		//cout<<ks_state_right<<endl;
-		arma::cx_double normalization;
-		arma::cx_double temporary;
+		//cout<<"ks_left "<<ks_state_left<<endl;
+		//cout<<"ks_right "<<ks_state_right<<endl;
+		///arma::cx_double temporary;
 		///if(number_g_points_list==1){
 		if(reverse==0){
 			//#pragma omp parallel for collapse(6) 
@@ -1670,18 +2016,16 @@ std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> Dipole_Elements::pull_values(
 				for(int n=0;n<number_left_states;n++)
 					for(int m=0;m<number_right_states;m++)
 						for(int g=0;g<number_g_points_list;g++)
-							for(int i=0;i<number_k_points_list;i++){
-								normalization.real(0.0); normalization.imag(0.0);
-								temporary.real(0.0); temporary.imag(0.0);
-								for(int r=0;r<spin_htb_basis_dimension;r++){
-									////normalization+=conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*ks_state_right(spin_channel*spin_htb_basis_dimension+r,m*number_k_points_list+i,g);
-									for(int s=0;s<spin_htb_basis_dimension;s++)
-										temporary+=conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g);
-											///rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g).real((rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g)).real()+real(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
-										///rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g).imag((rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g)).imag()+imag(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
-								rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g)=temporary;
+							for(int i=0;i<number_k_points_list;i++)
+								for(int r=0;r<spin_htb_basis_dimension;r++)
+									for(int s=0;s<spin_htb_basis_dimension;s++){
+										rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g).real(std::real(rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g))+std::real(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
+										rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g).imag(std::imag(rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g))+std::imag(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
+										//cout<<A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)<<endl;
+										///cout<<rho(spin_channel*number_left_states*number_right_states*number_k_points_list+n*number_right_states*number_k_points_list+m*number_k_points_list+i,g)<<endl;
 								}
-							}
+			///cout<<"rho "<<endl;
+			///cout<<rho<<endl;
 		}else{
 			///#pragma omp parallel for collapse(6) 
 			for(int spin_channel=0;spin_channel<(spinorial_calculation+1);spin_channel++)
@@ -1691,8 +2035,8 @@ std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> Dipole_Elements::pull_values(
 							for(int i=0;i<number_k_points_list;i++)
 								for(int r=0;r<spin_htb_basis_dimension;r++)
 									for(int s=0;s<spin_htb_basis_dimension;s++){
-										rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g).real((rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g)).real()+real(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
-										rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g).imag((rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g)).imag()+imag(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
+										rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g).real(real(rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g))+real(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
+										rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g).imag(imag(rho(spin_channel*number_left_states*number_right_states*number_k_points_list+m*number_left_states*number_k_points_list+n*number_k_points_list+i,g))+imag(conj(ks_state_left(spin_channel*spin_htb_basis_dimension+r,n*number_k_points_list+i,g))*A_matrix(g)(spin_channel*number_wannier_centers+r,spin_channel*number_wannier_centers+s)*ks_state_right(spin_channel*spin_htb_basis_dimension+s,m*number_k_points_list+i,g)));
 								}
 		}
 		///}else{
@@ -1825,7 +2169,7 @@ void Dipole_Elements::print(arma::vec excitonic_momentum,arma::vec parameter_l,a
 	//		arma::cx_mat A_ij=function_building_real_space_wannier_dipole_ij(w1,w2,excitonic_momentum,zeros);
 	//		cout<<w1<<" "<<w2<<" "<<A_ij<<endl;
 	//	}
-	arma::field<arma::cx_mat> Mij=function_building_M_k1k2_ij(excitonic_momentum,1);
+	arma::field<arma::cx_mat> Mij=function_building_M_k1k2_ij(excitonic_momentum,1,0,0);
 	cout<<Mij(0)<<endl;
 };
 
@@ -1874,7 +2218,7 @@ arma::cx_mat Dielectric_Function::pull_values(arma::vec excitonic_momentum,arma:
 	int dimension=(spinorial_calculation+1)*number_k_points_list*number_conduction_bands*number_valence_bands;
 
 	arma::vec zeros_vec(3,arma::fill::zeros);
-	std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> energies_rho=dipole_elements->pull_values(excitonic_momentum,zeros_vec,excitonic_momentum,1,0,1,0,0,0,threshold_proximity);
+	std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> energies_rho=dipole_elements->pull_values(excitonic_momentum,zeros_vec,excitonic_momentum,1,0,1,0,0,0,threshold_proximity,0,0);
 	arma::cx_mat rho_cv=get<2>(energies_rho);
 	arma::cx_mat energies=get<0>(energies_rho);
 	arma::cx_vec coulomb_shifted(number_g_points_list);
@@ -2114,21 +2458,20 @@ private:
 	arma::cx_vec v_coulomb_g;
 	arma::cx_mat excitonic_hamiltonian;
 	arma::cx_mat rho_q_diagk_cv;
-
 	arma::mat k_points_differences;
 public:
 	/// be carefull: do not try to build the BSE matrix with more bands than those given by the hamiltonian!!!
 	/// there is a check at the TB hamiltonian level but not here...
 	Excitonic_Hamiltonian(int number_valence_bands_tmp,int number_conduction_bands_tmp, arma::mat k_points_list_tmp, int number_k_points_list_tmp, arma::mat g_points_list_tmp,int number_g_points_list_tmp, int spinorial_calculation_tmp, int htb_basis_dimension_tmp,Dipole_Elements *dipole_elements_tmp, double cell_volume_tmp,int tamn_dancoff_tmp,int insulator_metal_tmp,arma::mat k_points_differences_tmp,double threshold_proximity_tmp);
 	void pull_coulomb_potentials(Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,arma::vec excitonic_momentum,double eta,int order_approximation,int number_integration_points,int reading_W,int adding_momentum);
-	void pull_resonant_part_and_rcv(arma::vec excitonic_momentum_tmp,int ipa);
+	void pull_resonant_part_and_rcv(arma::vec excitonic_momentum_tmp,int ipa,int small_momentum_value,int radius_convergence);
 	void add_coupling_part();
-	std::tuple<arma::cx_mat,arma::cx_mat> extract_hbse_and_rcv(arma::vec excitonic_momentum_tmp,double eta,Coulomb_Potential *coulomb_potential,Dielectric_Function *dielectric_function,int adding_screening,int tamn_dancoff,int order_approximation,int number_integration_points,int reading_W,int ipa);
+	std::tuple<arma::cx_mat,arma::cx_mat> extract_hbse_and_rcv(arma::vec excitonic_momentum_tmp,double eta,Coulomb_Potential *coulomb_potential,Dielectric_Function *dielectric_function,int adding_screening,int tamn_dancoff,int order_approximation,int number_integration_points,int reading_W,int ipa,int small_momentum_value,int radius_convergence);
 	std::tuple<arma::cx_vec,arma::cx_mat> common_diagonalization(int ipa);
 	///tuple<vec,cx_mat> cholesky_diagonalization(double eta);
 	std::tuple<arma::cx_vec,arma::cx_vec> pull_excitonic_oscillator_force(arma::cx_mat excitonic_eigenstates,int tamn_dancoff,int ipa);
-	void pull_macroscopic_bse_dielectric_function(arma::cx_vec omegas_path,int number_omegas_path,double eta,string file_macroscopic_dielectric_function_bse_name,double lorentzian,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa);
-	void print(arma::vec excitonic_momentum_tmp,double eta,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa);
+	void pull_macroscopic_bse_dielectric_function(arma::cx_vec omegas_path,int number_omegas_path,double eta,string file_macroscopic_dielectric_function_bse_name,double lorentzian,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa,int small_momentum_value,int radius_convergence);
+	void print(arma::vec excitonic_momentum_tmp,double eta,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa,int small_momentum_value,int radius_convergence);
 	arma::cx_mat pull_augmentation_matrix(arma::cx_mat exc_eigenstates,int spin_dimension_bse_hamiltonian_4_frac_tdf);
 	void spin_transformation();
 	///~Excitonic_Hamiltonian(){
@@ -2352,8 +2695,8 @@ void Excitonic_Hamiltonian::pull_coulomb_potentials(Coulomb_Potential* coulomb_p
 				}
 
 			}else{
-				double empirical_inv_epsilon=0.084033613;
-				////double empirical_inv_epsilon=0.08264462809917356;
+				double empirical_inv_epsilon=0.086206897;
+				///double empirical_inv_epsilon=0.086206897;
 
 				///double empirical_inv_epsilon=0.1;
 				///#pragma omp parallel for collapse(3)
@@ -2421,13 +2764,14 @@ void Excitonic_Hamiltonian::pull_coulomb_potentials(Coulomb_Potential* coulomb_p
 	//	if(i!=g_point_0)
 	//	cout<<v_coulomb_g(i)<<" ";
 };
-void Excitonic_Hamiltonian::pull_resonant_part_and_rcv(arma::vec excitonic_momentum_tmp,int ipa){
+void Excitonic_Hamiltonian::pull_resonant_part_and_rcv(arma::vec excitonic_momentum_tmp,int ipa,int small_excitonic_momentum,int radius_convergence){
 	//cleaning hamiltonian 
 	for(int i=0;i<spin_dimension_bse_hamiltonian_4_mult_tdf;i++)
 		for(int j=0;j<spin_dimension_bse_hamiltonian_4_mult_tdf;j++){
 			excitonic_hamiltonian(i,j).real(0.0);
 			excitonic_hamiltonian(i,j).imag(0.0);
 		}
+	
 	for(int i=0;i<spin_dimension_bse_hamiltonian_2_mult_tdf;i++)
 		for(int g=0;g<number_g_points_list;g++){
 			rho_q_diagk_cv(i,g).real(0.0);
@@ -2444,7 +2788,7 @@ void Excitonic_Hamiltonian::pull_resonant_part_and_rcv(arma::vec excitonic_momen
 	cout<<"building v"<<endl;
 	cout<<"beginning extracting rho"<<endl;
 	arma::vec zeros_vec(3,arma::fill::zeros);
-	std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> energies_rho_q_diagk_cv=dipole_elements->pull_values(excitonic_momentum,zeros_vec,excitonic_momentum,1,0,1,0,0,0,threshold_proximity);
+	std::tuple<arma::cx_mat,arma::cx_mat,arma::cx_mat> energies_rho_q_diagk_cv=dipole_elements->pull_values(excitonic_momentum,zeros_vec,excitonic_momentum,1,0,1,0,0,0,threshold_proximity,small_excitonic_momentum,0);
 	rho_q_diagk_cv.submat(0,0,spin_dimension_bse_hamiltonian_2-1,number_g_points_list-1)=get<2>(energies_rho_q_diagk_cv);
 	arma::cx_mat energies_q_diff=get<0>(energies_rho_q_diagk_cv);
 	arma::cx_mat energies_q_sum=get<1>(energies_rho_q_diagk_cv);
@@ -2488,10 +2832,10 @@ void Excitonic_Hamiltonian::pull_resonant_part_and_rcv(arma::vec excitonic_momen
 		
 		cout<<"building w"<<endl;
 		cout<<"beginning extracting rho"<<endl;
-		arma::cx_mat rho_kk_cc=get<2>(dipole_elements->pull_values(zeros_vec,zeros_vec,zeros_vec,0,0,1,1,0,0,threshold_proximity));
-		arma::cx_mat rho_qq_kk_vv=get<2>(dipole_elements->pull_values(zeros_vec,excitonic_momentum,excitonic_momentum,0,0,0,0,0,0,threshold_proximity));
-		///cout<<rho_kk_cc<<endl;
-		///cout<<rho_qq_kk_vv<<endl;
+		arma::cx_mat rho_kk_cc=get<2>(dipole_elements->pull_values(zeros_vec,zeros_vec,zeros_vec,0,0,1,1,0,0,threshold_proximity,0,radius_convergence));
+		arma::cx_mat rho_qq_kk_vv=get<2>(dipole_elements->pull_values(zeros_vec,excitonic_momentum,excitonic_momentum,0,0,0,0,0,0,threshold_proximity,0,radius_convergence));
+		//cout<<rho_kk_cc<<endl;
+		//cout<<rho_qq_kk_vv<<endl;
 		///cout<<v_coulomb_gg<<endl;
 		cout<<"ending extracting rho"<<endl;
 		cout<<"fourth part"<<endl;
@@ -2590,7 +2934,7 @@ void Excitonic_Hamiltonian::add_coupling_part(){
 	cout<<"building v"<<endl;
 	cout<<"beginning extracting rho"<<endl;
 	arma::vec zeros_vec(3,arma::fill::zeros);
-	arma::cx_mat rho_q_diagk_vc=get<2>(dipole_elements->pull_values(excitonic_momentum,-excitonic_momentum,zeros_vec,1,0,0,1,1,0,threshold_proximity));
+	arma::cx_mat rho_q_diagk_vc=get<2>(dipole_elements->pull_values(excitonic_momentum,-excitonic_momentum,zeros_vec,1,0,0,1,1,0,threshold_proximity,0,0));
 	cout<<"ending extracting rho"<<endl;
 	arma::cx_vec zeros_long_vec((spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list,arma::fill::zeros);
 	arma::cx_mat temporary_matrix1((spinorial_calculation+1)*number_conduction_bands*number_valence_bands*number_k_points_list,number_g_points_list);
@@ -2637,8 +2981,8 @@ void Excitonic_Hamiltonian::add_coupling_part(){
 	///double factor_w=-1;
 
 	cout<<"beginning extracting rho"<<endl;
-	arma::cx_mat rho_q_kk_cv=get<2>(dipole_elements->pull_values(-excitonic_momentum,zeros_vec,excitonic_momentum,0,0,1,0,0,0,threshold_proximity));
-	arma::cx_mat rho_q_kk_vc=get<2>(dipole_elements->pull_values(-excitonic_momentum,-excitonic_momentum,zeros_vec,0,0,0,1,0,0,threshold_proximity));
+	arma::cx_mat rho_q_kk_cv=get<2>(dipole_elements->pull_values(-excitonic_momentum,zeros_vec,excitonic_momentum,0,0,1,0,0,0,threshold_proximity,0,0));
+	arma::cx_mat rho_q_kk_vc=get<2>(dipole_elements->pull_values(-excitonic_momentum,-excitonic_momentum,zeros_vec,0,0,0,1,0,0,threshold_proximity,0,0));
 	cout<<"ending extracting rho"<<endl;
 
 	arma::cx_mat temporary_matrix3(number_k_points_list,number_g_points_list);
@@ -2694,9 +3038,9 @@ void Excitonic_Hamiltonian::add_coupling_part(){
 	///cout<<excitonic_hamiltonian<<endl;
 
 };
-std::tuple<arma::cx_mat,arma::cx_mat> Excitonic_Hamiltonian::extract_hbse_and_rcv(arma::vec excitonic_momentum_tmp,double eta,Coulomb_Potential *coulomb_potential,Dielectric_Function *dielectric_function,int adding_screening,int tamn_dancoff,int order_approximation,int number_integration_points,int reading_W,int ipa){
+std::tuple<arma::cx_mat,arma::cx_mat> Excitonic_Hamiltonian::extract_hbse_and_rcv(arma::vec excitonic_momentum_tmp,double eta,Coulomb_Potential *coulomb_potential,Dielectric_Function *dielectric_function,int adding_screening,int tamn_dancoff,int order_approximation,int number_integration_points,int reading_W,int ipa,int small_momentum_value,int radius_convergence){
 	pull_coulomb_potentials(coulomb_potential,dielectric_function,adding_screening,excitonic_momentum_tmp,eta,order_approximation,number_integration_points,reading_W,0);
-	pull_resonant_part_and_rcv(excitonic_momentum_tmp,ipa);
+	pull_resonant_part_and_rcv(excitonic_momentum_tmp,ipa,small_momentum_value,radius_convergence);
 	if(tamn_dancoff==0)
 		add_coupling_part();
 	return{excitonic_hamiltonian,rho_q_diagk_cv};
@@ -2719,35 +3063,53 @@ void Excitonic_Hamiltonian::spin_transformation(){
 	//	}
 	//	cout<<endl;
 	//}
-	arma::cx_double variable_tmp;
-	#pragma omp parallel for collapse(4) private(variable_tmp) shared(excitonic_hamiltonian)
+	arma::cx_mat variable_tmp(dimension_bse_hamiltonian,dimension_bse_hamiltonian);
+	arma::cx_mat zeros(dimension_bse_hamiltonian,dimension_bse_hamiltonian,arma::fill::zeros);
+	//#pragma omp paralle collapse(4) private(variable_tmp) shared(excitonic_hamiltonian)
+	///for(int i=0;i<dimension;i++)
+	///	for(int j=0;j<dimension;j++)
+	///		for(int r=0;r<dimension_bse_hamiltonian;r++)
+	///			for(int s=0;s<dimension_bse_hamiltonian;s++){
+	///				variable_tmp.real(0.0); variable_tmp.imag(0.0);
+	///				for(int k=0;k<dimension;k++)
+	///					for(int l=0;l<dimension;l++)
+	///						variable_tmp.submat+=U(i,l)*excitonic_hamiltonian(l*dimension_bse_hamiltonian+r,k*dimension_bse_hamiltonian+s)*U(k,j);
+	///				excitonic_hamiltonian(i*dimension_bse_hamiltonian+r,j*dimension_bse_hamiltonian+s)=variable_tmp;
+	///			}
 	for(int i=0;i<dimension;i++)
-		for(int j=0;j<dimension;j++)
-			for(int r=0;r<dimension_bse_hamiltonian;r++)
-				for(int s=0;s<dimension_bse_hamiltonian;s++){
-					variable_tmp.real(0.0); variable_tmp.imag(0.0);
-					for(int k=0;k<dimension;k++)
-						for(int l=0;l<dimension;l++)
-							variable_tmp+=U(i,l)*excitonic_hamiltonian(l*dimension_bse_hamiltonian+r,k*dimension_bse_hamiltonian+s)*U(k,j);
-					excitonic_hamiltonian(i*dimension_bse_hamiltonian+r,j*dimension_bse_hamiltonian+s)=variable_tmp;
-				}
+		for(int j=0;j<dimension;j++){
+			variable_tmp=zeros;
+			for(int k=0;k<dimension;k++)
+				for(int l=0;l<dimension;l++)
+					variable_tmp+=U(i,l)*excitonic_hamiltonian.submat(l*dimension_bse_hamiltonian,k*dimension_bse_hamiltonian,(l+1)*dimension_bse_hamiltonian-1,(k+1)*dimension_bse_hamiltonian-1)*U(k,j);
+			excitonic_hamiltonian.submat(i*dimension_bse_hamiltonian,j*dimension_bse_hamiltonian,(i+1)*dimension_bse_hamiltonian-1,(j+1)*dimension_bse_hamiltonian-1)=variable_tmp;
+		}
 	if(tamn_dancoff==0){
-		#pragma omp parallel for collapse(4) private(variable_tmp) shared(excitonic_hamiltonian)
+		///#pragma omp paralle collapse(4) private(variable_tmp) shared(excitonic_hamiltonian)
+		///for(int i=0;i<dimension;i++)
+		///	for(int j=0;j<dimension;j++)
+		///		for(int r=0;r<dimension_bse_hamiltonian;r++)
+		///			for(int s=0;s<dimension_bse_hamiltonian;s++){
+		///				variable_tmp.real(0.0); variable_tmp.imag(0.0);
+		///				for(int k=0;k<dimension;k++)
+		///					for(int l=0;l<dimension;l++)
+		///						variable_tmp+=U(i,l)*excitonic_hamiltonian(l*dimension_bse_hamiltonian+r,spin_dimension_bse_hamiltonian_4+k*dimension_bse_hamiltonian+s)*U(k,j);
+		///				excitonic_hamiltonian(i*dimension_bse_hamiltonian+r,spin_dimension_bse_hamiltonian_4+j*dimension_bse_hamiltonian+s)=variable_tmp;
+		///			}
 		for(int i=0;i<dimension;i++)
-			for(int j=0;j<dimension;j++)
-				for(int r=0;r<dimension_bse_hamiltonian;r++)
-					for(int s=0;s<dimension_bse_hamiltonian;s++){
-						variable_tmp.real(0.0); variable_tmp.imag(0.0);
-						for(int k=0;k<dimension;k++)
-							for(int l=0;l<dimension;l++)
-								variable_tmp+=U(i,l)*excitonic_hamiltonian(l*dimension_bse_hamiltonian+r,spin_dimension_bse_hamiltonian_4+k*dimension_bse_hamiltonian+s)*U(k,j);
-						excitonic_hamiltonian(i*dimension_bse_hamiltonian+r,spin_dimension_bse_hamiltonian_4+j*dimension_bse_hamiltonian+s)=variable_tmp;
-					}
-		#pragma omp parallel for collapse(2)
+			for(int j=0;j<dimension;j++){
+				variable_tmp=zeros;
+				for(int k=0;k<dimension;k++)
+					for(int l=0;l<dimension;l++)
+						variable_tmp+=U(i,l)*excitonic_hamiltonian.submat(l*dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian_4+k*dimension_bse_hamiltonian,(l+1)*dimension_bse_hamiltonian-1,spin_dimension_bse_hamiltonian_4+(k+1)*dimension_bse_hamiltonian-1)*U(k,j);
+				excitonic_hamiltonian.submat(i*dimension_bse_hamiltonian,spin_dimension_bse_hamiltonian_4+j*dimension_bse_hamiltonian,(i+1)*dimension_bse_hamiltonian-1,spin_dimension_bse_hamiltonian_4+(j+1)*dimension_bse_hamiltonian-1)=variable_tmp;
+			}
+		#pragma omp paralle collapse(2) shared(excitonic_hamiltonian)
 		for(int i=0;i<spin_dimension_bse_hamiltonian_4_frac_tdf;i++)
 			for(int j=0;j<spin_dimension_bse_hamiltonian_4_frac_tdf;j++)
 				excitonic_hamiltonian(spin_dimension_bse_hamiltonian_4+i,j)=-conj(excitonic_hamiltonian(j,spin_dimension_bse_hamiltonian_4+i));
-		#pragma omp parallel for collapse(2)
+		
+		#pragma omp paralle collapse(2) shared(excitonic_hamiltonian)
 		for(int i=0;i<spin_dimension_bse_hamiltonian_4_frac_tdf;i++)
 			for(int j=0;j<spin_dimension_bse_hamiltonian_4_frac_tdf;j++)
 				excitonic_hamiltonian(spin_dimension_bse_hamiltonian_4_frac_tdf+i,spin_dimension_bse_hamiltonian_4_frac_tdf+j)=-conj(excitonic_hamiltonian(i,j));
@@ -2979,7 +3341,7 @@ std::tuple<arma::cx_vec,arma::cx_mat> Excitonic_Hamiltonian::common_diagonalizat
 					else
 						exc_eigenvectors(s,i)=eigenvectors(s,ordering(i));
 				exc_eigenvalues(i)=eigenvalues(ordering(i));
-				cout<<exc_eigenvalues(i)<<endl;
+				///cout<<exc_eigenvalues(i)<<endl;
 				}
 		}else{
 			arma::cx_vec eigenvalues(spin_dimension_bse_hamiltonian_2_mult_tdf); 
@@ -2998,7 +3360,7 @@ std::tuple<arma::cx_vec,arma::cx_mat> Excitonic_Hamiltonian::common_diagonalizat
 					else
 						exc_eigenvectors(s,i)=eigenvectors(s,ordering(i));
 				exc_eigenvalues(i)=eigenvalues(ordering(i));
-				///cout<<exc_eigenvalues(i)<<endl;
+			///	cout<<exc_eigenvalues(i)<<endl;
 				}
 		}
 		return {exc_eigenvalues,exc_eigenvectors};
@@ -3141,17 +3503,12 @@ std::tuple<arma::cx_vec,arma::cx_vec> Excitonic_Hamiltonian::pull_excitonic_osci
 
 arma::cx_mat Excitonic_Hamiltonian:: pull_augmentation_matrix(arma::cx_mat exc_eigenstates,int spin_dimension_bse_hamiltonian_4_frac_tdf){
 	arma::cx_mat augmentation_matrix(spin_dimension_bse_hamiltonian_4_frac_tdf,spin_dimension_bse_hamiltonian_4_frac_tdf);
-	arma::cx_double temporary_variable;
 	
 	for(int i=0;i<spin_dimension_bse_hamiltonian_4_frac_tdf;i++)
-		for(int j=i;j<spin_dimension_bse_hamiltonian_4_frac_tdf;j++){
-			temporary_variable.real(0.0);
-			temporary_variable.imag(0.0);
-			for(int r=0;r<spin_dimension_bse_hamiltonian_4_frac_tdf;r++)
-				temporary_variable+=conj(exc_eigenstates(r,i))*exc_eigenstates(r,j);
-			augmentation_matrix(i,j)=temporary_variable;
-			augmentation_matrix(j,i)=temporary_variable;
-		}
+	for(int j=i;j<spin_dimension_bse_hamiltonian_4_frac_tdf;j++){
+		augmentation_matrix(i,j)=arma::accu(conj(exc_eigenstates.col(i))%exc_eigenstates.col(j));
+		augmentation_matrix(j,i)=augmentation_matrix(i,j);
+	}
 	cout<<augmentation_matrix<<endl;
 	///inverting the matrix
 	arma::cx_mat augmentation_matrix_inv(spin_dimension_bse_hamiltonian_4_frac_tdf,spin_dimension_bse_hamiltonian_4_frac_tdf);
@@ -3165,17 +3522,23 @@ arma::cx_mat Excitonic_Hamiltonian:: pull_augmentation_matrix(arma::cx_mat exc_e
 };
 
 
-void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(arma::cx_vec omegas_path,int number_omegas_path,double eta,string file_macroscopic_dielectric_function_bse_name,double lorentzian,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa)
+void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(arma::cx_vec omegas_path,int number_omegas_path,double eta,string file_macroscopic_dielectric_function_bse_name,double lorentzian,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa,int small_excitonic_momentum,int radius_convergence)
 {
 	cout << "Calculating dielectric tensor..." << endl;
-	double factor=conversion_parameter/(minval*minval*cell_volume*number_k_points_list);
+	double factor;
+	if(small_excitonic_momentum==0)
+		factor=conversion_parameter/(minval*minval*cell_volume*number_k_points_list);
+	else
+		factor=conversion_parameter/(cell_volume*number_k_points_list);
 	cout<<cell_volume<<endl;
 
 	arma::cx_cube dielectric_tensor_bse(3,3,number_omegas_path,arma::fill::zeros);
 	arma::cx_vec average_dielectric_tensor_bse(number_omegas_path,arma::fill::zeros);
 	arma::cx_double ieta;	ieta.real(0.0);	ieta.imag(eta);
 	arma::cx_double ilorentzian; ilorentzian.real(0.0); ilorentzian.imag(lorentzian);
+	arma::cx_double ilorentzian2; ilorentzian2.real(0.0); ilorentzian2.imag(0.1);
 	arma::cx_vec temporary_variable(number_omegas_path);
+	arma::cx_vec temporary_variable2(number_omegas_path);
 	arma::mat excitonic_momentum(3,3,arma::fill::zeros);
 	arma::vec excitonic_momentum1(3,arma::fill::zeros);
 	std::tuple<arma::cx_vec,arma::cx_vec> oscillators_forces;
@@ -3198,7 +3561,7 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(arma::cx_v
 	//	excitonic_momentum(r,0)=bravais_lattice(r,2)/arma::vecnorm(bravais_lattice.col(2));
 	excitonic_momentum(0,0)=minval;
 	excitonic_momentum(1,1)=minval;
-	excitonic_momentum(2,1)=minval;
+	excitonic_momentum(2,2)=minval;
 	///excitonic_momentum.col(2)=arma::cross(excitonic_momentum.col(1),excitonic_momentum.col(0));
 	///for(int r=0;r<3;r++)
 	///	excitonic_momentum(r,2)=excitonic_momentum(r,2)/arma::vecnorm(excitonic_momentum.col(2));
@@ -3216,7 +3579,7 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(arma::cx_v
 				excitonic_momentum1=excitonic_momentum.col(i);
 				if(ipa==0)
 					pull_coulomb_potentials(coulomb_potential,dielectric_function,adding_screening,excitonic_momentum1,eta,order_approximation,number_integration_points,reading_W,0);
-				pull_resonant_part_and_rcv(excitonic_momentum1,ipa);
+				pull_resonant_part_and_rcv(excitonic_momentum1,ipa,small_excitonic_momentum,radius_convergence);
 				///cout<<excitonic_hamiltonian<<endl;
 				///cout<<k_points_differences<<endl;
 				if((tamn_dancoff==0)&&(ipa==0)){
@@ -3239,7 +3602,7 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(arma::cx_v
 				exc_oscillator_force_l=get<0>(oscillators_forces);
 				exc_oscillator_force_r=get<1>(oscillators_forces);
 				cout<<"oscillator forces"<<endl;
-				cout<<rho_q_diagk_cv<<endl;
+				///cout<<rho_q_diagk_cv<<endl;
 				///cout<<exc_oscillator_force_l<<" "<<exc_oscillator_force_r<<endl;
 				if((tamn_dancoff==0)&&(ipa==0)){
 					for(int s=0;s<number_omegas_path;s++){
@@ -3260,10 +3623,12 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(arma::cx_v
 						temporary_variable(s)=0.0;
 						for(int m=0;m<spin_dimension_bse_hamiltonian_2;m++){
 							temporary_variable(s)+=conj(exc_oscillator_force_l(m))*exc_oscillator_force_r(m)/(omegas_path(s)-exc_eigenvalues(m+spin_dimension_bse_hamiltonian_2*(1-tamn_dancoff))+ilorentzian);
+							temporary_variable2(s)+=conj(exc_oscillator_force_l(m))*exc_oscillator_force_r(m)/(omegas_path(s)-exc_eigenvalues(m+spin_dimension_bse_hamiltonian_2*(1-tamn_dancoff))+ilorentzian2);
+							
 							///cout<<"oscillator strength "<<conj(exc_oscillator_force_l(m))*exc_oscillator_force_r(m)<<endl;
 						}
 						dielectric_tensor_bse(i,j,s)=delta(i,j)-factor*temporary_variable(s);
-						dielectric_tmp_file<<dielectric_tensor_bse(i,j,s)<<endl;
+						dielectric_tmp_file<<dielectric_tensor_bse(i,j,s)<<"   "<<temporary_variable2(s)<<endl;
 						average_dielectric_tensor_bse(s)+=dielectric_tensor_bse(i,j,s);
 					}
 				}
@@ -3291,10 +3656,10 @@ void Excitonic_Hamiltonian:: pull_macroscopic_bse_dielectric_function(arma::cx_v
 	dielectric_tensor_file.close();
 };
 
-void Excitonic_Hamiltonian::print(arma::vec excitonic_momentum_tmp,double eta,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa){
+void Excitonic_Hamiltonian::print(arma::vec excitonic_momentum_tmp,double eta,int tamn_dancoff,Coulomb_Potential* coulomb_potential,Dielectric_Function* dielectric_function,int adding_screening,int order_approximation,int number_integration_points,int reading_W,int ipa,int small_momentum_value,int radius_convergence){
 	
 	pull_coulomb_potentials(coulomb_potential,dielectric_function,adding_screening,excitonic_momentum,eta,order_approximation,number_integration_points,reading_W,0);	
-	pull_resonant_part_and_rcv(excitonic_momentum_tmp,ipa);
+	pull_resonant_part_and_rcv(excitonic_momentum_tmp,ipa,small_momentum_value,radius_convergence);
 	if(tamn_dancoff==0)
 		add_coupling_part();
 	cout<<number_k_points_list<<endl;
@@ -3322,14 +3687,14 @@ int main(int argc, char** argv){
 
 	cout<<minval<<" "<<conversion_parameter<<endl;
 	//if(my_rank==0){
-	double fermi_energy = 15.5124;
-	///double fermi_energy=6.800;
+	///double fermi_energy = 15.5124;
+	double fermi_energy=6.800;
 	////Initializing Lattice
-	string file_crystal_bravais_name="bravais.lattice.data";
-	string file_crystal_coordinates_name="atoms.data";
-	//string file_crystal_bravais_name="bravais.lattice_si.data";
-	//string file_crystal_coordinates_name="atoms_si.data";
-	int number_atoms=4;
+	///string file_crystal_bravais_name="bravais.lattice.data";
+	///string file_crystal_coordinates_name="atoms.data";
+	string file_crystal_bravais_name="bravais.lattice_si.data";
+	string file_crystal_coordinates_name="atoms_si.data";
+	int number_atoms=2;
 	Crystal_Lattice crystal(file_crystal_bravais_name,file_crystal_coordinates_name,number_atoms);
 	double volume=crystal.pull_volume();
 	arma::mat bravais_lattice=crystal.pull_bravais_lattice();
@@ -3346,7 +3711,7 @@ int main(int argc, char** argv){
 	shift(1)=0.000;
 	shift(1)=0.000;
 	string file_k_points_name="k_points_list_si.dat";
-	int number_k_points_list=200;
+	int number_k_points_list=1000;
 	int crystal_coordinates=1;
 	int random_generator=1;
 	K_points k_points(&crystal,shift,number_k_points_list);
@@ -3381,64 +3746,71 @@ int main(int argc, char** argv){
 
 	////Initializing the Tight Binding hamiltonian (saving the Wannier functions centers)
 	ifstream file_htb; ifstream file_centers; string seedname;
-	string wannier90_hr_file_name="nio_hr.dat";
-	string wannier90_centers_file_name="nio_centres.xyz";
-	///string wannier90_hr_file_name="silicon_hr.dat_8bands_10_20";
-	///string wannier90_centers_file_name="silicon_centres.xyz_8bands_10_20";
+	///string wannier90_hr_file_name="nio_hr.dat";
+	///string wannier90_centers_file_name="nio_centres.xyz";
+	string wannier90_hr_file_name="silicon_hr.dat_8bands_10_20";
+	string wannier90_centers_file_name="silicon_centres.xyz_8bands_10_20";
 	
 	bool dynamic_shifting=false;
-	int spinorial_calculation = 1;
+	int spinorial_calculation = 0;
 	double little_shift=0.00;
-	double scissor_operator=1.00;
-	///double scissor_operator=3.00;
-	int number_primitive_cells=597;
-	int number_wannier_functions=16;
-	Hamiltonian_TB htb(wannier90_hr_file_name,wannier90_centers_file_name,fermi_energy,spinorial_calculation,number_atoms,dynamic_shifting,little_shift,scissor_operator,bravais_lattice,number_primitive_cells,number_wannier_functions);
+	double scissor_operator=0.00;
+	///double scissor_operator=4.00;
+	int number_primitive_cells=617;
+	int number_wannier_functions=8;
+	int looking_from_fermi=1;
+	////ERRATA if looking from fermi = 0, correct the option in diagonalization....
+	//int number_total_conduction=2;
+	///int number_total_valence=4;
+	Hamiltonian_TB htb(wannier90_hr_file_name,wannier90_centers_file_name,fermi_energy,spinorial_calculation,number_atoms,dynamic_shifting,little_shift,scissor_operator,bravais_lattice,number_primitive_cells,number_wannier_functions,looking_from_fermi);
 
 	/// 0 no spinors, 1 collinear spinors, 2 non-collinear spinors (implementing 0 and 1 cases)
 	int number_wannier_centers=htb.pull_number_wannier_functions();
 	int htb_basis_dimension=htb.pull_htb_basis_dimension();
 	arma::vec k_point; k_point.zeros(3); k_point(0)=minval;
 	///BANDS STRUCTURE
-	//string bands_file_name="bands.data";
-	//string k_points_bands_file_name="k_points_bands.data";
-	//int number_k_points_bands=3;
-	//htb.pull_bands(bands_file_name,k_points_bands_file_name,number_k_points_bands,14,2,crystal_coordinates,primitive_vectors);
+	///string bands_file_name="bands.data";
+	///string k_points_bands_file_name="k_points_bands.data";
+	///int number_k_points_bands=3;
+	///htb.pull_bands(bands_file_name,k_points_bands_file_name,number_k_points_bands,4,4,crystal_coordinates,primitive_vectors);
 
 	//////Initializing dipole elements
 	int number_conduction_bands_selected_diel=2;
-	int number_valence_bands_selected_diel=6;
+	int number_valence_bands_selected_diel=2;
 	int number_conduction_bands_selected=2;
-	int number_valence_bands_selected=6;
+	int number_valence_bands_selected=2;
 
 
 	////Initializing Real Space Wannier functions
 	arma::vec number_points_real_space_grid(3);
 	arma::vec number_unit_cells_supercell(3);
-	string seedname_files_xsf="Calc_";
+	string seedname_files_xsf="silicon";
 	number_unit_cells_supercell(0)=3;
 	number_unit_cells_supercell(1)=3;
 	number_unit_cells_supercell(2)=3;
-	number_points_real_space_grid(0)=162;
-	number_points_real_space_grid(1)=162;
-	number_points_real_space_grid(2)=162;
+	number_points_real_space_grid(0)=96;
+	number_points_real_space_grid(1)=96;
+	number_points_real_space_grid(2)=96;
 	
 	Real_space_wannier real_space_wannier(number_points_real_space_grid,number_unit_cells_supercell,spinorial_calculation,seedname_files_xsf,number_wannier_functions,volume,number_atoms,atoms_coordinates);
 	arma::vec which_cell(3);
-	which_cell(0)=0;
-	which_cell(1)=0;
-	which_cell(2)=0;
+	which_cell(0)=1;
+	which_cell(1)=1;
+	which_cell(2)=1;
 	double isovalue_pos=20;
 	double isovalue_neg=-10;
-	//string wannier_file_name="test.xsf";
-	//real_space_wannier.print(1,which_cell,0,isovalue_pos,isovalue_neg,wannier_file_name);
+	string wannier_file_name="test.xsf";
+	///real_space_wannier.print(5,which_cell,0,isovalue_pos,isovalue_neg,wannier_file_name);
 
 	arma::vec number_primitive_cells_integration(3);
-	number_primitive_cells_integration(0)=1;
-	number_primitive_cells_integration(1)=1;
-	number_primitive_cells_integration(2)=1;
+	number_primitive_cells_integration(0)=3;
+	number_primitive_cells_integration(1)=3;
+	number_primitive_cells_integration(2)=3;
 	
-	Dipole_Elements dipole_elements(number_k_points_list,k_points_list,number_g_points_list,g_points_list,number_wannier_centers,number_valence_bands_selected,number_conduction_bands_selected,&htb,spinorial_calculation,&real_space_wannier,number_primitive_cells_integration,number_unit_cells_supercell,number_points_real_space_grid);
+	double radius_building_kernel=0.2;
+	///not implemente this radius threhsold
+	double threshold_building_kernel=1.0e-2;
+	Dipole_Elements dipole_elements(number_k_points_list,k_points_list,number_g_points_list,g_points_list,number_wannier_centers,number_valence_bands_selected,number_conduction_bands_selected,&htb,spinorial_calculation,&real_space_wannier,number_primitive_cells_integration,number_unit_cells_supercell,number_points_real_space_grid,radius_building_kernel,threshold_building_kernel);
 	arma::vec zeros(3,arma::fill::zeros);
 	arma::vec excitonic_momentum(3,arma::fill::zeros);
 	excitonic_momentum(0)=minval;
@@ -3457,18 +3829,20 @@ int main(int argc, char** argv){
 		omegas_path(i)=(min_omega+double(i)/double(number_omegas_path)*(max_omega-min_omega));
 	
 	int adding_screening=0;
-	double lorentzian=0.05;
+	double lorentzian=0.2;
 	int tamn_dancoff=1;
-	int ipa=0;
+	int ipa=1;
 	int insulator_metal=0;
-	double threshold_proximity=0.2;
+	double threshold_proximity=0.1;
 	arma::mat k_points_differences=k_points.pull_k_point_differences();
 	Excitonic_Hamiltonian htbse(number_valence_bands_selected,number_conduction_bands_selected,k_points_list,number_k_points_list,g_points_list,number_g_points_list,spinorial_calculation,htb_basis_dimension,&dipole_elements,volume,tamn_dancoff,insulator_metal,k_points_differences,threshold_proximity);
 	///cout<<bravais_lattice<<endl;
 	int reading_W=0;
 	int number_integration_points=4;
-	string file_macroscopic_dielectric_function_bse_name="bse_2x4_864_8bands.final_realspacedipoles.txt";
-	htbse.pull_macroscopic_bse_dielectric_function(omegas_path,number_omegas_path,eta,file_macroscopic_dielectric_function_bse_name,lorentzian,tamn_dancoff,&coulomb_potential,&dielectric_function,adding_screening,order_approximation,number_integration_points,reading_W,ipa);
+	int small_momentum_value=1;
+	int radius_convergence=1;
+	string file_macroscopic_dielectric_function_bse_name="corrected_bse_22_2000k_0.2lorentian_8wfs.data";
+	htbse.pull_macroscopic_bse_dielectric_function(omegas_path,number_omegas_path,eta,file_macroscopic_dielectric_function_bse_name,lorentzian,tamn_dancoff,&coulomb_potential,&dielectric_function,adding_screening,order_approximation,number_integration_points,reading_W,ipa,small_momentum_value,radius_convergence);
 	
 	return 1;
 };
