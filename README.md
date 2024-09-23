@@ -9,7 +9,7 @@ final version: 13
 
 (doing testing)
 
-the formula of the pdf here needs some adjustments
+the formula of the pdf here need some adjustments
 
 
 
