@@ -5,9 +5,13 @@ BSE from a Tigh-Binding Hamiltonian
 
 Magnetic and Not-Magnetic Systems
 
-debugging in progress
+final version: 13
 
-final version:13
+(doing testing)
+
+the formula of the pdf here needs some adjustments
+
+
 
 
 
