@@ -1,15 +1,10 @@
-# BSE
-BSE from a Tigh-Binding Hamiltonian
+Bethe-Salpeter equation from a Tigh-Binding Hamiltonian
 (q->0 implemented, but the structure to consider also the q\neq0 limit is built)
-
-
-Magnetic and Not-Magnetic Systems
-
-final version: 13
+Magnetic and not-magnetic systems can be considered
 
 (doing testing)
 
-the formula of the pdf here need some adjustments
+Formulas are in my phd-thesis
 
 
 
